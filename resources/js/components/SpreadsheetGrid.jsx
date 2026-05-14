@@ -890,6 +890,21 @@ export default function SpreadsheetGrid({
 
     function renderBars() {
         const bars = [];
+        const labels = [];
+
+        // 行ごとの予定開始X位置マップ（ラベルの右端クリップ位置算出用）
+        const rowStartXMap = new Map();
+        for (const g of layoutGroups) {
+            if (!g.plans) continue;
+            for (const plan of g.plans) {
+                const sx = planToStartCol(plan, startDate, viewMode) * colW;
+                const absRow = g.startRow + plan.rowIdx;
+                if (!rowStartXMap.has(absRow)) rowStartXMap.set(absRow, []);
+                rowStartXMap.get(absRow).push({ startX: sx, planId: plan.planId });
+            }
+        }
+        for (const arr of rowStartXMap.values()) arr.sort((a, b) => a.startX - b.startX);
+
         for (const g of layoutGroups) {
             if (!g.plans) continue;
             for (const plan of g.plans) {
@@ -905,7 +920,6 @@ export default function SpreadsheetGrid({
                 if (absRow < visRowStart || absRow > visRowEnd) continue;
 
                 const bg = getColor(plan.taskBackColor);
-                const fg = getColor(plan.taskFontColor);
                 const isSel = selected.has(plan.planId);
 
                 const isDragging = dragRef.current?.dragPlans?.some(p => p.planId === plan.planId);
@@ -919,23 +933,28 @@ export default function SpreadsheetGrid({
                         ghostX = x + ghostDrag.deltaCol * colW;
                     }
                 }
+                const barX = ghost ? ghostX : x;
+                const barY = ghost ? ghostY : y;
 
-                const rightLabel = mode === 'device' ? plan.workerName : plan.serialNo;
-                const barLabel = plan.taskName;
+                // 同一行の次の予定開始X（ラベルをそこでクリップ）
+                const rowArr = rowStartXMap.get(absRow) || [];
+                const myIdx = rowArr.findIndex(r => r.planId === plan.planId);
+                const nextBarX = (myIdx >= 0 && myIdx + 1 < rowArr.length) ? rowArr[myIdx + 1].startX : null;
+                const labelWidth = nextBarX !== null ? Math.max(0, nextBarX - x - HANDLE_W) : 9999;
 
                 bars.push(
                     <div
                         key={plan.planId}
                         style={{
-                            position: 'absolute', left: ghost ? ghostX : x, top: ghost ? ghostY : y,
-                            width: w, height: h, background: bg, color: fg,
+                            position: 'absolute', left: barX, top: barY,
+                            width: w, height: h, background: bg,
                             borderRadius: 3, display: 'flex', alignItems: 'center',
                             border: '1px solid rgba(0,0,0,0.15)',
                             boxShadow: isSel
                                 ? 'inset 0 0 0 2px #1d4ed8, 0 0 0 2px #93c5fd'
                                 : 'none',
                             boxSizing: 'border-box', zIndex: isSel ? 4 : ghost ? 10 : 2,
-                            opacity: ghost ? 0.5 : 1, cursor: 'grab', fontSize: 10, overflow: 'hidden',
+                            opacity: ghost ? 0.5 : 1, cursor: 'grab', overflow: 'hidden',
                             userSelect: 'none',
                         }}
                         onPointerDown={e => { if (e.button === 0) handleBarPointerDown(e, plan, 'move'); }}
@@ -945,17 +964,37 @@ export default function SpreadsheetGrid({
                             style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }}
                             onPointerDown={e => { e.stopPropagation(); handleBarPointerDown(e, plan, 'resize-left'); }}
                         />
-                        <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 2px' }}>{barLabel}</span>
-                        <span style={{ fontSize: 9, opacity: 0.8, flexShrink: 0, paddingRight: 2 }}>{rightLabel}</span>
+                        <div style={{ flex: 1 }} />
                         <div
                             style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }}
                             onPointerDown={e => { e.stopPropagation(); handleBarPointerDown(e, plan, 'resize-right'); }}
                         />
                     </div>
                 );
+
+                // ラベル（バー外にはみ出し可、次のバー手前でクリップ）
+                const label = plan.workerName
+                    ? `${plan.taskName} ${plan.workerName}`
+                    : plan.taskName;
+                labels.push(
+                    <div
+                        key={`lbl-${plan.planId}`}
+                        style={{
+                            position: 'absolute', left: barX + HANDLE_W, top: barY,
+                            width: labelWidth, height: h,
+                            display: 'flex', alignItems: 'center',
+                            overflow: 'hidden', whiteSpace: 'nowrap',
+                            fontSize: 10, color: '#000',
+                            pointerEvents: 'none', zIndex: 5,
+                            paddingLeft: 2, userSelect: 'none',
+                        }}
+                    >
+                        {label}
+                    </div>
+                );
             }
         }
-        return bars;
+        return [...bars, ...labels];
     }
 
     function renderLeftHeader() {

@@ -1,0 +1,12 @@
+@import 'tailwindcss';
+
+@source '../../vendor/laravel/framework/src/Illuminate/Pagination/resources/views/*.blade.php';
+@source '../../storage/framework/views/*.php';
+@source '../**/*.blade.php';
+@source '../**/*.js';
+@source '../**/*.jsx';
+
+@keyframes sonar-ring {
+  0%   { transform: scale(0.25); opacity: 0.9; }
+  100% { transform: scale(3.2);  opacity: 0;   }
+}

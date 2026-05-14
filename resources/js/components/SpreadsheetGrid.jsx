@@ -192,8 +192,9 @@ export default function SpreadsheetGrid({
     const [containerW, setContainerW] = useState(1200);
 
     const dragRef = useRef(null);
-    const rectRef = useRef(null);
-    const [rectDrag, setRectDrag] = useState(null);
+    const [rectSelect, setRectSelect] = useState(null); // {absX1,absY1,absX2,absY2} in content coords
+    const suppressNextCellClickRef = useRef(false);
+    const layoutGroupsRef = useRef([]);
 
     const leftHdrW = mode === 'device' ? DEV_HDR_W : ASGN_HDR_W;
 
@@ -230,6 +231,9 @@ export default function SpreadsheetGrid({
         const groupKey = mode === 'device' ? 'device' : 'worker';
         return layoutPlans(plans.filter(p => !p.deleted), groupKey, filteredGroups, viewMode, startDate);
     }, [plans, filteredGroups, mode, viewMode, startDate]);
+
+    // 矩形選択のクロージャ内から常に最新レイアウトを参照できるようにする
+    layoutGroupsRef.current = layoutGroups;
 
     const totalH = totalRows * CELL_SIZE;
     const colW = CELL_SIZE;
@@ -312,42 +316,128 @@ export default function SpreadsheetGrid({
         return { startCol, endCol, rowIdx: pp.rowIdx, groupStartRow: g.startRow };
     }
 
+    function handleContentPointerDown(e) {
+        if (e.button !== 0) return;
+        const scrollEl = scrollRef.current;
+        const scrollRect = scrollEl.getBoundingClientRect();
+
+        // ヘッダー領域（sticky部分）のクリックは無視
+        if (e.clientY < scrollRect.top + TOTAL_HDR_H) return;
+
+        const startCX = e.clientX;
+        const startCY = e.clientY;
+
+        // クライアント座標 → セルコンテンツ内の絶対座標
+        const toAbs = (cx, cy) => ({
+            x: cx - scrollRect.left + scrollEl.scrollLeft,
+            y: cy - scrollRect.top - TOTAL_HDR_H + scrollEl.scrollTop,
+        });
+
+        let dragging = false;
+        let lastCX = startCX;
+        let lastCY = startCY;
+
+        const onMove = (e2) => {
+            const dx = e2.clientX - startCX;
+            const dy = e2.clientY - startCY;
+            if (!dragging && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
+                dragging = true;
+            }
+            lastCX = e2.clientX;
+            lastCY = e2.clientY;
+            if (dragging) {
+                const s = toAbs(startCX, startCY);
+                const en = toAbs(e2.clientX, e2.clientY);
+                setRectSelect({ x1: s.x, y1: s.y, x2: en.x, y2: en.y });
+            }
+        };
+
+        const onUp = () => {
+            window.removeEventListener('pointermove', onMove);
+            window.removeEventListener('pointerup', onUp);
+            if (!dragging) { setRectSelect(null); return; }
+
+            // 次の click イベント（セルの onClick）を抑制
+            suppressNextCellClickRef.current = true;
+            setTimeout(() => { suppressNextCellClickRef.current = false; }, 0);
+
+            const s = toAbs(startCX, startCY);
+            const en = toAbs(lastCX, lastCY);
+            const selX1 = Math.min(s.x, en.x);
+            const selX2 = Math.max(s.x, en.x);
+            const selY1 = Math.min(s.y, en.y);
+            const selY2 = Math.max(s.y, en.y);
+
+            const newSelected = new Set();
+            for (const g of layoutGroupsRef.current) {
+                if (!g.plans) continue;
+                for (const p of g.plans) {
+                    const sc = planToStartCol(p, startDate, viewMode);
+                    const ec = planToEndCol(p, startDate, viewMode);
+                    const absRow = g.startRow + p.rowIdx;
+                    const bx1 = sc * colW;
+                    const bx2 = (ec + 1) * colW;
+                    const by1 = absRow * CELL_SIZE;
+                    const by2 = (absRow + 1) * CELL_SIZE;
+                    if (bx1 < selX2 && bx2 > selX1 && by1 < selY2 && by2 > selY1) {
+                        newSelected.add(p.planId);
+                    }
+                }
+            }
+
+            setSelected(newSelected);
+            setSelectedCell(null);
+            setRectSelect(null);
+        };
+
+        window.addEventListener('pointermove', onMove);
+        window.addEventListener('pointerup', onUp);
+    }
+
     function handleBarPointerDown(e, plan, type) {
         e.stopPropagation();
-        e.preventDefault();
         if (e.button !== 0) return;
+
+        // 選択処理を pointerdown で行う（preventDefault を外したので click も生きるが、こちらで完結させる）
+        setSelectedCell(null);
+        if (e.ctrlKey || e.metaKey) {
+            setSelected(prev => {
+                const s = new Set(prev);
+                s.has(plan.planId) ? s.delete(plan.planId) : s.add(plan.planId);
+                return s;
+            });
+        } else {
+            // 既に複数選択に含まれている場合はそのままにしてドラッグできるようにする
+            setSelected(prev => prev.has(plan.planId) ? prev : new Set([plan.planId]));
+        }
 
         const bar = getPlanBar(plan);
         if (!bar) return;
 
-        containerRef.current?.setPointerCapture?.(e.pointerId);
-
         const startX = e.clientX;
         const startY = e.clientY;
-        const initStartCol = bar.startCol;
-        const initEndCol = bar.endCol;
-        const initRowIdx = bar.rowIdx;
-        const initGroupStartRow = bar.groupStartRow;
 
-        const isSelected = selected.has(plan.planId);
-        const dragPlans = isSelected ? [...selected].map(id => plans.find(p => p.planId === id)).filter(Boolean) : [plan];
+        // selectedRef を使ってポインターキャプチャ後も最新の選択状態を参照できるようにする
+        const capturedSelected = selected.has(plan.planId) ? selected : new Set([plan.planId]);
+        const dragPlans = [...capturedSelected].map(id => plans.find(p => p.planId === id)).filter(Boolean);
+        if (!dragPlans.some(p => p.planId === plan.planId)) dragPlans.push(plan);
 
         dragRef.current = {
             type,
             plan,
             dragPlans,
             startX, startY,
-            initStartCol, initEndCol, initRowIdx, initGroupStartRow,
             deltaCol: 0, deltaRow: 0,
             active: false,
         };
 
         const onMove = (e2) => {
+            if (!dragRef.current) return;
             const dx = e2.clientX - startX;
             const dy = e2.clientY - startY;
             const dc = Math.round(dx / colW);
             const dr = Math.round(dy / CELL_SIZE);
-            if (!dragRef.current.active && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) {
+            if (!dragRef.current.active && (Math.abs(dx) > 4 || Math.abs(dy) > 4)) {
                 dragRef.current.active = true;
             }
             dragRef.current.deltaCol = dc;
@@ -356,12 +446,13 @@ export default function SpreadsheetGrid({
             containerRef.current?.dispatchEvent(new CustomEvent('dragupdate'));
         };
 
-        const onUp = async (e2) => {
+        const onUp = async () => {
             window.removeEventListener('pointermove', onMove);
             window.removeEventListener('pointerup', onUp);
-            if (!dragRef.current.active) { dragRef.current = null; return; }
+            if (!dragRef.current || !dragRef.current.active) { dragRef.current = null; return; }
             await commitDrag(dragRef.current);
             dragRef.current = null;
+            setGhostDrag(null);
         };
 
         window.addEventListener('pointermove', onMove);
@@ -720,6 +811,7 @@ export default function SpreadsheetGrid({
                             cursor: 'cell',
                         }}
                         onClick={e => {
+                            if (suppressNextCellClickRef.current) return;
                             e.stopPropagation();
                             setSelectedCell({ col, row });
                             setSelected(new Set());
@@ -786,21 +878,16 @@ export default function SpreadsheetGrid({
                             position: 'absolute', left: ghost ? ghostX : x, top: ghost ? ghostY : y,
                             width: w, height: h, background: bg, color: fg,
                             borderRadius: 3, display: 'flex', alignItems: 'center',
-                            border: isSel ? '2px solid #1d4ed8' : '1px solid rgba(0,0,0,0.15)',
-                            boxSizing: 'border-box', zIndex: ghost ? 10 : 2,
+                            border: '1px solid rgba(0,0,0,0.15)',
+                            boxShadow: isSel
+                                ? 'inset 0 0 0 2px #1d4ed8, 0 0 0 2px #93c5fd'
+                                : 'none',
+                            boxSizing: 'border-box', zIndex: isSel ? 4 : ghost ? 10 : 2,
                             opacity: ghost ? 0.5 : 1, cursor: 'grab', fontSize: 10, overflow: 'hidden',
                             userSelect: 'none',
                         }}
                         onPointerDown={e => { if (e.button === 0) handleBarPointerDown(e, plan, 'move'); }}
                         onContextMenu={e => handleBarRightClick(e, plan)}
-                        onClick={e => {
-                            setSelectedCell(null);
-                            if (e.ctrlKey || e.metaKey) {
-                                setSelected(prev => { const s = new Set(prev); s.has(plan.planId) ? s.delete(plan.planId) : s.add(plan.planId); return s; });
-                            } else {
-                                setSelected(new Set([plan.planId]));
-                            }
-                        }}
                     >
                         <div
                             style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }}
@@ -916,10 +1003,31 @@ export default function SpreadsheetGrid({
                             </div>
                         </div>
                         {/* セル + バー */}
-                        <div style={{ position: 'relative', height: totalH }}>
+                        <div
+                            style={{ position: 'relative', height: totalH }}
+                            onPointerDown={handleContentPointerDown}
+                        >
                             {renderCells()}
                             {renderGroupLines()}
                             {renderBars()}
+                            {/* 矩形選択オーバーレイ */}
+                            {rectSelect && (
+                                <div
+                                    style={{
+                                        position: 'absolute',
+                                        left: Math.min(rectSelect.x1, rectSelect.x2),
+                                        top: Math.min(rectSelect.y1, rectSelect.y2),
+                                        width: Math.abs(rectSelect.x2 - rectSelect.x1),
+                                        height: Math.abs(rectSelect.y2 - rectSelect.y1),
+                                        background: 'rgba(37,99,235,0.08)',
+                                        border: '1.5px solid rgba(37,99,235,0.7)',
+                                        borderRadius: 2,
+                                        pointerEvents: 'none',
+                                        zIndex: 30,
+                                        boxSizing: 'border-box',
+                                    }}
+                                />
+                            )}
                         </div>
                     </div>
                 </div>

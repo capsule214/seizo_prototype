@@ -212,6 +212,10 @@ export default function SpreadsheetGrid({
             if (selectedKisyuIds.length > 0) {
                 s = s.filter(ser => selectedKisyuIds.includes(String(ser.kisyuId)));
             }
+            s = [...s].sort((a, b) => {
+                if (a.sortNo !== b.sortNo) return a.sortNo - b.sortNo;
+                return a.serialNo.localeCompare(b.serialNo, 'ja', { numeric: true });
+            });
             return s.slice(0, deviceCount).map(ser => ({
                 id: ser.serialId,
                 label1: ser.kisyuName,
@@ -670,23 +674,39 @@ export default function SpreadsheetGrid({
         if (!jumpTarget) return;
         const { plan, targetMode } = jumpTarget;
         if (targetMode !== mode) return;
-        const col = planToStartCol(plan, startDate, viewMode);
-        const gid = mode === 'device' ? plan.serialId : plan.workerId;
-        const g = layoutGroups.find(g => g.id === gid);
-        if (!g) { onJumpHandled?.(); return; }
-        const row = g.startRow;
-        const x = col * colW - containerW / 2 + leftHdrW;
-        const y = row * CELL_SIZE - containerH / 2 + TOTAL_HDR_H;
-        if (scrollRef.current) {
-            scrollRef.current.scrollLeft = Math.max(0, x);
-            scrollRef.current.scrollTop = Math.max(0, y - TOTAL_HDR_H);
+
+        // planId で直接検索（serialId/workerId ではなく planId で一致させる）
+        let targetGroup = null;
+        let targetPlanRow = null;
+        for (const g of layoutGroups) {
+            const pp = g.plans?.find(p => p.planId === plan.planId);
+            if (pp) { targetGroup = g; targetPlanRow = pp; break; }
         }
-        const barX = col * colW + leftHdrW - scrollLeft;
-        const barY = (row + (g.plans?.find(p => p.planId === plan.planId)?.rowIdx ?? 0)) * CELL_SIZE + TOTAL_HDR_H - scrollTop;
+
+        // まだロードされていない場合は return のみ（onJumpHandled は呼ばない）
+        // → layoutGroups が更新されたとき（プランロード完了後）に再実行される
+        if (!targetGroup) return;
+
+        const col = planToStartCol(plan, startDate, viewMode);
+        const absRow = targetGroup.startRow + targetPlanRow.rowIdx;
+
+        // バーを画面中央に来るようにスクロール
+        const newScrollLeft = Math.max(0, col * colW - (containerW - leftHdrW) / 2);
+        const newScrollTop  = Math.max(0, absRow * CELL_SIZE - (containerH - TOTAL_HDR_H) / 2);
+
+        if (scrollRef.current) {
+            scrollRef.current.scrollLeft = newScrollLeft;
+            scrollRef.current.scrollTop  = newScrollTop;
+        }
+
+        // ソナー位置は新しいスクロール値で算出（stale な React state を使わない）
+        const barX = col * colW - newScrollLeft + leftHdrW + colW / 2;
+        const barY = absRow * CELL_SIZE - newScrollTop + TOTAL_HDR_H + CELL_SIZE / 2;
+
         setSonar({ x: barX, y: barY, key: Date.now() });
         setTimeout(() => setSonar(null), 2200);
         onJumpHandled?.();
-    }, [jumpTarget]);
+    }, [jumpTarget, layoutGroups]);
 
     async function handleSeedApply() {
         fetchedRangesRef.current = [];

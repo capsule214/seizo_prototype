@@ -179,6 +179,7 @@ export default function SpreadsheetGrid({
     const [tooltip, setTooltip] = useState(null);
     const [scheduleDialog, setScheduleDialog] = useState(null);
     const [selected, setSelected] = useState(new Set());
+    const [selectedCell, setSelectedCell] = useState(null);
     const [copied, setCopied] = useState([]);
     const [sonar, setSonar] = useState(null);
 
@@ -700,16 +701,28 @@ export default function SpreadsheetGrid({
         const cells = [];
         for (let col = visColStart; col <= visColEnd; col++) {
             const x = col * colW;
-            const bg = getColBg(col);
+            const baseBg = getColBg(col);
             for (let row = visRowStart; row <= visRowEnd; row++) {
                 const y = row * CELL_SIZE;
+                const isSel = selectedCell && selectedCell.col === col && selectedCell.row === row;
                 cells.push(
                     <div
                         key={`c${col}-${row}`}
                         style={{
                             position: 'absolute', left: x, top: y, width: colW, height: CELL_SIZE,
-                            background: bg, borderRight: '1px solid #e5e7eb', borderBottom: '1px solid #e5e7eb',
+                            background: isSel ? '#bfdbfe' : baseBg,
+                            borderRight: '1px solid #e5e7eb',
+                            borderBottom: '1px solid #e5e7eb',
+                            outline: isSel ? '2px solid #2563eb' : 'none',
+                            outlineOffset: '-1px',
+                            zIndex: isSel ? 3 : 0,
                             boxSizing: 'border-box',
+                            cursor: 'cell',
+                        }}
+                        onClick={e => {
+                            e.stopPropagation();
+                            setSelectedCell({ col, row });
+                            setSelected(new Set());
                         }}
                         onContextMenu={e => handleCellRightClick(e, col, row)}
                     />
@@ -781,6 +794,7 @@ export default function SpreadsheetGrid({
                         onPointerDown={e => { if (e.button === 0) handleBarPointerDown(e, plan, 'move'); }}
                         onContextMenu={e => handleBarRightClick(e, plan)}
                         onClick={e => {
+                            setSelectedCell(null);
                             if (e.ctrlKey || e.metaKey) {
                                 setSelected(prev => { const s = new Set(prev); s.has(plan.planId) ? s.delete(plan.planId) : s.add(plan.planId); return s; });
                             } else {
@@ -888,7 +902,10 @@ export default function SpreadsheetGrid({
                     style={{ position: 'absolute', left: leftHdrW, top: 0, right: 0, bottom: 0, overflow: 'scroll' }}
                     onScroll={onScroll}
                     onClick={e => {
-                        if (e.target === scrollRef.current) setSelected(new Set());
+                        if (e.target === scrollRef.current) {
+                            setSelected(new Set());
+                            setSelectedCell(null);
+                        }
                     }}
                 >
                     <div style={{ width: totalCols * colW, height: TOTAL_HDR_H + totalH, position: 'relative' }}>

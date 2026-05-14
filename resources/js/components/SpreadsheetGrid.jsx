@@ -164,7 +164,8 @@ function computeGaps(fetchedRanges, from, to) {
 
 export default function SpreadsheetGrid({
     mode, serials, workers, tasks, displaySettings,
-    onJumpToOtherTab, jumpTarget, onJumpHandled,
+    onJumpToOtherTab, jumpTarget, onJumpHandled, onJumpError,
+    onRangeChange,
 }) {
     const today = new Date();
     const [startDate, setStartDate] = useState(() => {
@@ -195,10 +196,17 @@ export default function SpreadsheetGrid({
     const [rectSelect, setRectSelect] = useState(null); // {absX1,absY1,absX2,absY2} in content coords
     const suppressNextCellClickRef = useRef(false);
     const layoutGroupsRef = useRef([]);
+    const jumpAttemptsRef = useRef(0);
+    const prevJumpTargetRef = useRef(null);
 
     const leftHdrW = mode === 'device' ? DEV_HDR_W : ASGN_HDR_W;
 
     const endDate = useMemo(() => addDays(startDate, displayMonths * 30), [startDate, displayMonths]);
+
+    // 表示範囲を親へ通知（ジャンプ前チェックに使用）
+    useEffect(() => {
+        onRangeChange?.({ startDate, endDate });
+    }, [startDate, endDate]);
 
     const totalCols = useMemo(() => {
         const days = daysBetween(startDate, endDate);
@@ -671,11 +679,21 @@ export default function SpreadsheetGrid({
     }, [selected, plans, copied, scrollLeft, colW]);
 
     useEffect(() => {
-        if (!jumpTarget) return;
+        if (!jumpTarget) {
+            jumpAttemptsRef.current = 0;
+            prevJumpTargetRef.current = null;
+            return;
+        }
         const { plan, targetMode } = jumpTarget;
         if (targetMode !== mode) return;
 
-        // planId で直接検索（serialId/workerId ではなく planId で一致させる）
+        // jumpTarget が切り替わったら試行カウントをリセット
+        if (jumpTarget !== prevJumpTargetRef.current) {
+            jumpAttemptsRef.current = 0;
+            prevJumpTargetRef.current = jumpTarget;
+        }
+
+        // planId で直接検索
         let targetGroup = null;
         let targetPlanRow = null;
         for (const g of layoutGroups) {
@@ -683,9 +701,18 @@ export default function SpreadsheetGrid({
             if (pp) { targetGroup = g; targetPlanRow = pp; break; }
         }
 
-        // まだロードされていない場合は return のみ（onJumpHandled は呼ばない）
-        // → layoutGroups が更新されたとき（プランロード完了後）に再実行される
-        if (!targetGroup) return;
+        if (!targetGroup) {
+            jumpAttemptsRef.current += 1;
+            // 2回目以降（初回フェッチ完了後）も見つからなければエラー
+            if (jumpAttemptsRef.current >= 2) {
+                onJumpError?.();
+                onJumpHandled?.();
+                jumpAttemptsRef.current = 0;
+            }
+            return;
+        }
+
+        jumpAttemptsRef.current = 0;
 
         const col = planToStartCol(plan, startDate, viewMode);
         const absRow = targetGroup.startRow + targetPlanRow.rowIdx;
@@ -694,14 +721,19 @@ export default function SpreadsheetGrid({
         const newScrollLeft = Math.max(0, col * colW - (containerW - leftHdrW) / 2);
         const newScrollTop  = Math.max(0, absRow * CELL_SIZE - (containerH - TOTAL_HDR_H) / 2);
 
+        // 書き込み後に実際の値を読み返す（コンテンツ末尾付近でクランプされる場合がある）
+        let actualScrollLeft = newScrollLeft;
+        let actualScrollTop  = newScrollTop;
         if (scrollRef.current) {
             scrollRef.current.scrollLeft = newScrollLeft;
             scrollRef.current.scrollTop  = newScrollTop;
+            actualScrollLeft = scrollRef.current.scrollLeft;
+            actualScrollTop  = scrollRef.current.scrollTop;
         }
 
-        // ソナー位置は新しいスクロール値で算出（stale な React state を使わない）
-        const barX = col * colW - newScrollLeft + leftHdrW + colW / 2;
-        const barY = absRow * CELL_SIZE - newScrollTop + TOTAL_HDR_H + CELL_SIZE / 2;
+        // ソナー位置はクランプ後の実際のスクロール値で算出
+        const barX = col * colW - actualScrollLeft + leftHdrW + colW / 2;
+        const barY = absRow * CELL_SIZE - actualScrollTop + TOTAL_HDR_H + CELL_SIZE / 2;
 
         setSonar({ x: barX, y: barY, key: Date.now() });
         setTimeout(() => setSonar(null), 2200);

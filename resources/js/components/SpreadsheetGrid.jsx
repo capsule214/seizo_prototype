@@ -542,6 +542,8 @@ export default function SpreadsheetGrid({
 
     function handleCellRightClick(e, col, row) {
         e.preventDefault();
+        setSelectedCell({ col, row });
+        setSelected(new Set());
         const g = getGroupAtRow(row);
         const colDate = colToDateStr(startDate, col, viewMode);
         const items = [
@@ -572,20 +574,29 @@ export default function SpreadsheetGrid({
     function handleBarRightClick(e, plan) {
         e.preventDefault();
         e.stopPropagation();
-        const isMulti = selected.size > 1 && selected.has(plan.planId);
+        // 右クリックしたバーが既存の複数選択に含まれていない場合は単一選択に切り替え
+        const alreadyInMulti = selected.size > 1 && selected.has(plan.planId);
+        if (!alreadyInMulti) {
+            setSelected(new Set([plan.planId]));
+            setSelectedCell(null);
+        }
+        const isMulti = alreadyInMulti;
         const n = isMulti ? selected.size : 1;
-        const items = [
-            { label: '詳細', onClick: () => setTooltip({ plan, x: e.clientX, y: e.clientY }) },
-            { label: '編集', onClick: () => setScheduleDialog({ plan }) },
-            { label: isMulti ? `${n}件コピー` : 'コピー', onClick: () => {
-                const toCopy = isMulti ? [...selected].map(id => plans.find(p => p.planId === id)).filter(Boolean) : [plan];
+        const items = isMulti ? [
+            { label: `${n}件コピー`, onClick: () => {
+                const toCopy = [...selected].map(id => plans.find(p => p.planId === id)).filter(Boolean);
                 setCopied(toCopy);
             }},
             'separator',
-            { label: isMulti ? `${n}件削除` : '削除', danger: true, onClick: () => {
-                const toDelete = isMulti ? [...selected] : [plan.planId];
-                deletePlans(toDelete);
+            { label: `${n}件削除`, danger: true, onClick: () => {
+                deletePlans([...selected]);
             }},
+        ] : [
+            { label: '詳細', onClick: () => setTooltip({ plan, x: e.clientX, y: e.clientY }) },
+            { label: '編集', onClick: () => setScheduleDialog({ plan }) },
+            { label: 'コピー', onClick: () => setCopied([plan]) },
+            'separator',
+            { label: '削除', danger: true, onClick: () => deletePlans([plan.planId]) },
             'separator',
             {
                 label: mode === 'device' ? '担当者予定を表示' : '装置予定を表示',
@@ -853,7 +864,7 @@ export default function SpreadsheetGrid({
                         key={`c${col}-${row}`}
                         style={{
                             position: 'absolute', left: x, top: y, width: colW, height: CELL_SIZE,
-                            background: isSel ? '#bfdbfe' : baseBg,
+                            background: baseBg,
                             borderRight: '1px solid #e5e7eb',
                             borderBottom: '1px solid #e5e7eb',
                             outline: isSel ? '2px solid #2563eb' : 'none',
@@ -913,8 +924,8 @@ export default function SpreadsheetGrid({
                 const x = startCol * colW;
                 const w = Math.max(colW, (endCol - startCol + 1) * colW);
                 const absRow = g.startRow + plan.rowIdx;
-                const y = absRow * CELL_SIZE + 2;
-                const h = CELL_SIZE - 4;
+                const y = absRow * CELL_SIZE;
+                const h = CELL_SIZE;
 
                 if (x + w < scrollLeft || x > scrollLeft + containerW) continue;
                 if (absRow < visRowStart || absRow > visRowEnd) continue;
@@ -948,7 +959,7 @@ export default function SpreadsheetGrid({
                         style={{
                             position: 'absolute', left: barX, top: barY,
                             width: w, height: h, background: bg,
-                            borderRadius: 3, display: 'flex', alignItems: 'center',
+                            display: 'flex', alignItems: 'center',
                             border: '1px solid rgba(0,0,0,0.15)',
                             boxShadow: isSel
                                 ? 'inset 0 0 0 2px #1d4ed8, 0 0 0 2px #93c5fd'

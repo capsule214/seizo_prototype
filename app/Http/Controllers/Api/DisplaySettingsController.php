@@ -4,42 +4,37 @@ namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use SQLite3;
+use Illuminate\Support\Facades\DB;
 
 class DisplaySettingsController extends Controller
 {
-    private function getDb(): SQLite3
-    {
-        $path = database_path('database.sqlite');
-        return new SQLite3($path);
-    }
+    private const KEY = 'main';
+    private const WORKER_ID = 0;
 
     public function index()
     {
-        $db  = $this->getDb();
-        $row = $db->querySingle("SELECT value FROM display_settings WHERE key='main'", true);
-        $db->close();
+        $value = DB::table('display_settings')
+            ->where('key', self::KEY)
+            ->value('value');
 
-        if (!$row) {
+        if ($value === null) {
             return response()->json(['selectedKisyuIds' => [], 'selectedWorkerIds' => []]);
         }
 
-        return response()->json(json_decode($row['value'], true));
+        return response()->json(json_decode($value, true));
     }
 
     public function update(Request $request)
     {
-        $payload = json_encode($request->all());
-        $db      = $this->getDb();
+        $payload = $request->only(['selectedKisyuIds', 'selectedWorkerIds']);
+        $json    = json_encode($payload);
 
-        $stmt = $db->prepare(
-            "INSERT INTO display_settings (worker_id, key, value) VALUES (0, 'main', :v)
-             ON CONFLICT(key) DO UPDATE SET value=excluded.value"
+        DB::table('display_settings')->upsert(
+            [['worker_id' => self::WORKER_ID, 'key' => self::KEY, 'value' => $json]],
+            ['key'],
+            ['value']
         );
-        $stmt->bindValue(':v', $payload, SQLITE3_TEXT);
-        $stmt->execute();
-        $db->close();
 
-        return response()->json(json_decode($payload, true));
+        return response()->json($payload);
     }
 }

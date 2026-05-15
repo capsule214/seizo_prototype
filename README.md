@@ -1,58 +1,130 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# 製造スケジュール管理アプリ (seizo_prototype)
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+装置ごと・担当者ごとの製造予定をガントチャート形式で管理するシングルページアプリケーション（SPA）のプロトタイプです。
 
-## About Laravel
+---
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+## 技術スタック
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+| レイヤー | 技術 |
+|---|---|
+| バックエンド | Laravel 13 / PHP 8.2 |
+| フロントエンド | React 19 / Vite 8 |
+| CSS | Tailwind CSS v4 |
+| DB | SQLite 3 |
+| ランタイム | Node.js 22.12 以上（Vite 8 の要件）|
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+---
 
-## Learning Laravel
+## 主な機能
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
+- **装置タブ / 担当者タブ** の切り替えによるガントチャート表示
+- 予定バーの **ドラッグ移動・リサイズ**（装置間・担当者間の移動含む）
+- **複数選択**（Ctrl+クリック・矩形ドラッグ）
+- **コピー＆ペースト**（貼り付け先の装置/担当者に統一）
+- 右クリック **コンテキストメニュー**（追加・編集・コピー・削除・タブジャンプ）
+- **保存 / キャンセル** ボタンによる編集の一括確定・破棄
+- **表示設定**（機種・担当者の表示フィルタリング）
+- 日本の **祝日対応**（ハッピーマンデー・振替休日・国民の休日）
+- **仮想スクロール**（大量データでも高速描画）
 
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
+## セットアップ
 
-## Agentic Development
+### 必要なもの
 
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
+- PHP 8.2+
+- Composer
+- Node.js 22.12+
+
+### インストール
 
 ```bash
-composer require laravel/boost --dev
+# PHP 依存関係
+composer install
 
-php artisan boost:install
+# Node 依存関係
+npm install
+
+# 環境ファイルの作成
+cp .env.example .env
+php artisan key:generate
+
+# DB マイグレーション
+php artisan migrate
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+### 開発サーバー起動
 
-## Contributing
+```bash
+npm run start
+# → Laravel: http://localhost:8000
+# → Vite HMR: http://localhost:5173
+```
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+### 本番ビルド
 
-## Code of Conduct
+```bash
+npm run build
+php artisan serve
+```
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+---
 
-## Security Vulnerabilities
+## テストデータの投入
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+画面上部の「適用」ボタン、または API で直接投入できます。
 
-## License
+```bash
+curl -X POST http://localhost:8000/api/seed \
+  -H "Content-Type: application/json" \
+  -d '{"count": 100, "baseDate": "2026-01-01", "months": 6}'
+```
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+---
+
+## API エンドポイント
+
+| メソッド | パス | 説明 |
+|---|---|---|
+| GET | `/api/serial` | 装置一覧 |
+| GET | `/api/worker` | 担当者一覧 |
+| GET | `/api/task` | タスク一覧 |
+| GET | `/api/plan?from=&to=` | 予定一覧（期間フィルタ） |
+| POST | `/api/plan` | 予定作成 |
+| PUT | `/api/plan/{id}` | 予定更新 |
+| DELETE | `/api/plan` | 予定一括削除（論理削除） |
+| GET | `/api/display-settings` | 表示設定取得 |
+| PUT | `/api/display-settings` | 表示設定保存 |
+| POST | `/api/seed` | テストデータ生成 |
+
+---
+
+## ディレクトリ構成（主要部分）
+
+```
+app/
+  Http/Controllers/Api/   # API コントローラ
+  Models/                 # Eloquent モデル
+database/
+  migrations/             # DB スキーマ定義
+resources/
+  js/
+    app.jsx               # React エントリーポイント
+    components/           # UI コンポーネント
+      SpreadsheetGrid.jsx       # メインのグリッド
+      SpreadsheetGridClient.jsx # タブ管理・保存/キャンセル
+      DisplaySettingsDialog.jsx
+      ScheduleDialog.jsx
+      ContextMenu.jsx
+      BarTooltip.jsx
+      VirtualList.jsx
+      DatePicker.jsx
+    lib/
+      holidays.js         # 日本祝日計算
+      colors.js           # タスク色パレット
+routes/
+  api.php                 # API ルート定義
+  web.php                 # SPA マウントポイント
+```

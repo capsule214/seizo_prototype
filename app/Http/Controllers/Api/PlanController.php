@@ -51,11 +51,11 @@ class PlanController extends Controller
     public function store(Request $request)
     {
         $data = $request->validate([
-            'serialId'   => 'required|integer',
-            'taskId'     => 'required|integer',
-            'workerId'   => 'required|integer',
-            'startDate'  => 'required|string',
-            'endDate'    => 'required|string',
+            'serialId'  => 'required|integer|min:1',
+            'taskId'    => 'required|integer|min:1',
+            'workerId'  => 'required|integer|min:1',
+            'startDate' => 'required|date',
+            'endDate'   => 'required|date|after_or_equal:startDate',
         ]);
 
         $plan = KdPlan::create([
@@ -77,11 +77,11 @@ class PlanController extends Controller
         $plan = KdPlan::findOrFail($id);
 
         $data = $request->validate([
-            'serialId'   => 'required|integer',
-            'taskId'     => 'required|integer',
-            'workerId'   => 'required|integer',
-            'startDate'  => 'required|string',
-            'endDate'    => 'required|string',
+            'serialId'  => 'required|integer|min:1',
+            'taskId'    => 'required|integer|min:1',
+            'workerId'  => 'required|integer|min:1',
+            'startDate' => 'required|date',
+            'endDate'   => 'required|date|after_or_equal:startDate',
         ]);
 
         $plan->update([
@@ -99,9 +99,14 @@ class PlanController extends Controller
 
     public function destroy(Request $request)
     {
-        $ids = $request->input('ids', []);
-        KdPlan::whereIn('plan_id', $ids)->update(['deleted' => 1]);
-        return response()->json(['deleted' => count($ids)]);
+        $data = $request->validate([
+            'ids'   => 'required|array|min:1',
+            'ids.*' => 'integer|min:1',
+        ]);
+
+        $ids     = $data['ids'];
+        $deleted = KdPlan::whereIn('plan_id', $ids)->update(['deleted' => 1]);
+        return response()->json(['deleted' => $deleted]);
     }
 
     public function destroyOne(int $id)

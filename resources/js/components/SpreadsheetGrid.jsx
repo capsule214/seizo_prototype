@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { getDateType } from '../lib/holidays';
 import { getColor } from '../lib/colors';
 import ContextMenu from './ContextMenu';
@@ -162,11 +162,11 @@ function computeGaps(fetchedRanges, from, to) {
     return gaps;
 }
 
-export default function SpreadsheetGrid({
+const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     mode, serials, workers, tasks, displaySettings,
     onJumpToOtherTab, jumpTarget, onJumpHandled, onJumpError,
-    onRangeChange,
-}) {
+    onRangeChange, onDirtyChange,
+}, ref) {
     const today = new Date();
     const [startDate, setStartDate] = useState(() => {
         const d = new Date(today.getFullYear(), today.getMonth(), 1);
@@ -176,6 +176,15 @@ export default function SpreadsheetGrid({
     const [deviceCount, setDeviceCount] = useState(1000);
     const [viewMode, setViewMode] = useState('day');
     const [plans, setPlans] = useState([]);
+    const [isDirty, setIsDirty] = useState(false);
+
+    // 保存保留中の変更（移動/リサイズ/削除/貼り付け）を蓄積する
+    // pendingCreates: Map<tempId(負数), payload>  pendingUpdates: Map<planId, payload>  pendingDeletes: Set<planId(正数のみ)>
+    const pendingCreatesRef = useRef(new Map());
+    const pendingUpdatesRef = useRef(new Map());
+    const pendingDeletesRef = useRef(new Set());
+    const tempIdCounterRef  = useRef(-1); // 貼り付け時のローカル仮ID（負数）
+
     const [contextMenu, setContextMenu] = useState(null);
     const [tooltip, setTooltip] = useState(null);
     const [scheduleDialog, setScheduleDialog] = useState(null);
@@ -261,7 +270,7 @@ export default function SpreadsheetGrid({
         return () => obs.disconnect();
     }, []);
 
-    async function fetchPlans(from, to) {
+    const fetchPlans = useCallback(async (from, to) => {
         const gaps = computeGaps(fetchedRangesRef.current, from, to);
         for (const gap of gaps) {
             try {
@@ -277,11 +286,73 @@ export default function SpreadsheetGrid({
                 console.error('fetchPlans error', e);
             }
         }
-    }
+    }, []);
 
     useEffect(() => {
         fetchPlans(startDate, endDate);
     }, [startDate, endDate]);
+
+    // 保存・キャンセルを親から呼び出せるようにする
+    useImperativeHandle(ref, () => ({
+        async saveChanges() {
+            const creates = pendingCreatesRef.current;
+            const updates = pendingUpdatesRef.current;
+            const deletes = pendingDeletesRef.current;
+
+            // 新規作成（貼り付け）：仮IDを DB の本IDで置き換える
+            for (const [tempId, payload] of creates) {
+                try {
+                    const res = await fetch('/api/plan', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                    const newPlan = await res.json();
+                    setPlans(prev => prev.map(p => p.planId === tempId ? { ...p, ...newPlan } : p));
+                } catch (err) { console.error('saveChanges create error', err); }
+            }
+
+            // 削除（DB 上に存在する正のIDのみ）
+            if (deletes.size > 0) {
+                try {
+                    await fetch('/api/plan', {
+                        method: 'DELETE',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ ids: [...deletes].map(String) }),
+                    });
+                } catch (err) { console.error('saveChanges delete error', err); }
+            }
+
+            // 更新（削除済みは除外）
+            for (const [planId, payload] of updates) {
+                if (deletes.has(planId)) continue;
+                try {
+                    await fetch(`/api/plan/${planId}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                } catch (err) { console.error('saveChanges update error', err); }
+            }
+
+            pendingCreatesRef.current = new Map();
+            pendingUpdatesRef.current = new Map();
+            pendingDeletesRef.current = new Set();
+            setIsDirty(false);
+            onDirtyChange?.(false);
+        },
+        async cancelChanges() {
+            pendingCreatesRef.current = new Map();
+            pendingUpdatesRef.current = new Map();
+            pendingDeletesRef.current = new Set();
+            tempIdCounterRef.current = -1;
+            fetchedRangesRef.current = [];
+            setPlans([]);
+            setIsDirty(false);
+            onDirtyChange?.(false);
+            await fetchPlans(startDate, endDate);
+        },
+    }), [fetchPlans, startDate, endDate, onDirtyChange]);
 
     useEffect(() => {
         if (!scrollRef.current) return;
@@ -472,7 +543,18 @@ export default function SpreadsheetGrid({
     }
 
     async function commitDrag(drag) {
-        const { type, plan, dragPlans, deltaCol, deltaRow, initStartCol, initEndCol, initGroupStartRow } = drag;
+        const { type, plan, dragPlans, deltaCol, deltaRow } = drag;
+
+        // 複数選択ドラッグ時の移動先グループは、ドラッグ主対象の着地先を全プランに共通適用する
+        let destGroupId = null;
+        if (type === 'move' && deltaRow !== 0) {
+            const mainBar = getPlanBar(plan);
+            if (mainBar) {
+                const destAbsRow = mainBar.groupStartRow + mainBar.rowIdx + deltaRow;
+                const destGroup  = getGroupAtRow(destAbsRow);
+                if (destGroup) destGroupId = destGroup.id;
+            }
+        }
 
         for (const dp of dragPlans) {
             const dpBar = getPlanBar(dp);
@@ -496,35 +578,28 @@ export default function SpreadsheetGrid({
             const newStartDate = colToDateTime(startDate, newStartCol, 'start', viewMode);
             const newEndDate = colToDateTime(startDate, newEndCol, 'end', viewMode);
 
+            // 移動先グループが確定している場合は全プランを同一グループへ
             let newSerialId = dp.serialId;
             let newWorkerId = dp.workerId;
-
-            if (type === 'move' && deltaRow !== 0) {
-                const newAbsRow = dpBar.groupStartRow + dpBar.rowIdx + deltaRow;
-                const newGroup = getGroupAtRow(newAbsRow);
-                if (newGroup) {
-                    if (mode === 'device') newSerialId = newGroup.id;
-                    else newWorkerId = newGroup.id;
-                }
+            if (destGroupId !== null) {
+                if (mode === 'device') newSerialId = destGroupId;
+                else newWorkerId = destGroupId;
             }
 
-            try {
-                const res = await fetch(`/api/plan/${dp.planId}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        serialId: newSerialId,
-                        taskId: dp.taskId,
-                        workerId: newWorkerId,
-                        startDate: newStartDate,
-                        endDate: newEndDate,
-                    }),
-                });
-                const updated = await res.json();
-                setPlans(prev => prev.map(p => p.planId === dp.planId ? { ...p, ...updated } : p));
-            } catch (err) {
-                console.error('commitDrag error', err);
-            }
+            // API は呼ばず、ローカル state を即時更新して保留リストに積む
+            const payload = {
+                serialId: newSerialId,
+                taskId: dp.taskId,
+                workerId: newWorkerId,
+                startDate: newStartDate,
+                endDate: newEndDate,
+            };
+            setPlans(prev => prev.map(p =>
+                p.planId === dp.planId ? { ...p, ...payload } : p
+            ));
+            pendingUpdatesRef.current.set(dp.planId, payload);
+            setIsDirty(true);
+            onDirtyChange?.(true);
         }
     }
 
@@ -565,7 +640,7 @@ export default function SpreadsheetGrid({
             },
             ...(copied.length > 0 ? [{
                 label: `貼り付け（${copied.length}件）`,
-                onClick: () => pastePlans(col),
+                onClick: () => pastePlans(col, row),
             }] : []),
         ];
         setContextMenu({ x: e.clientX, y: e.clientY, items });
@@ -606,41 +681,57 @@ export default function SpreadsheetGrid({
         setContextMenu({ x: e.clientX, y: e.clientY, items });
     }
 
-    async function deletePlans(ids) {
-        try {
-            await fetch('/api/plan', {
-                method: 'DELETE',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ ids: ids.map(String) }),
-            });
-            setPlans(prev => prev.filter(p => !ids.includes(p.planId)));
-            setSelected(prev => { const s = new Set(prev); ids.forEach(id => s.delete(id)); return s; });
-        } catch (err) {
-            console.error('deletePlans error', err);
-        }
+    function deletePlans(ids) {
+        // API は呼ばず、ローカル state を即時更新して保留リストに積む
+        setPlans(prev => prev.filter(p => !ids.includes(p.planId)));
+        setSelected(prev => { const s = new Set(prev); ids.forEach(id => s.delete(id)); return s; });
+        ids.forEach(id => {
+            if (id < 0) {
+                // 貼り付けで生成した仮ID → DB には存在しないので creates から除去するだけ
+                pendingCreatesRef.current.delete(id);
+            } else {
+                // DB 上に存在するプラン → 削除リストへ（更新リストから除外）
+                pendingDeletesRef.current.add(id);
+                pendingUpdatesRef.current.delete(id);
+            }
+        });
+        setIsDirty(true);
+        onDirtyChange?.(true);
     }
 
-    async function pastePlans(targetCol) {
+    function pastePlans(targetCol, targetRow) {
         if (!copied.length) return;
+        // 貼り付け先の行グループ（装置 or 担当者）を特定
+        const targetGroup = getGroupAtRow(targetRow);
+        if (!targetGroup) return; // グループが特定できない場合は貼り付けしない
+
+        // 貼り付け先の serialId / workerId（全プランに共通で適用）
+        const targetSerialId = mode === 'device' ? targetGroup.id : null;
+        const targetWorkerId = mode === 'worker' ? targetGroup.id : null;
+
+        // 先頭プランの開始列を基準に列オフセットを算出
         const firstStartCol = planToStartCol(copied[0], startDate, viewMode);
         const offset = targetCol - firstStartCol;
+
+        const newPlans = [];
         for (const p of copied) {
             const sc = planToStartCol(p, startDate, viewMode) + offset;
             const ec = planToEndCol(p, startDate, viewMode) + offset;
             const newStart = colToDateTime(startDate, Math.max(0, sc), 'start', viewMode);
-            const newEnd = colToDateTime(startDate, Math.max(0, ec), 'end', viewMode);
-            try {
-                const res = await fetch('/api/plan', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ serialId: p.serialId, taskId: p.taskId, workerId: p.workerId, startDate: newStart, endDate: newEnd }),
-                });
-                const newPlan = await res.json();
-                setPlans(prev => [...prev, newPlan]);
-            } catch (err) {
-                console.error('pastePlans error', err);
-            }
+            const newEnd   = colToDateTime(startDate, Math.max(0, ec), 'end', viewMode);
+
+            // 全プランを貼り付け先の装置/担当者に統一する
+            const newSerialId = mode === 'device' ? targetSerialId : p.serialId;
+            const newWorkerId = mode === 'worker' ? targetWorkerId : p.workerId;
+
+            const payload = { serialId: newSerialId, taskId: p.taskId, workerId: newWorkerId, startDate: newStart, endDate: newEnd };
+            const tempId = tempIdCounterRef.current--;
+            newPlans.push({ ...p, planId: tempId, ...payload });
+            pendingCreatesRef.current.set(tempId, payload);
         }
+        setPlans(prev => [...prev, ...newPlans]);
+        setIsDirty(true);
+        onDirtyChange?.(true);
     }
 
     async function savePlan(data) {
@@ -1170,4 +1261,6 @@ export default function SpreadsheetGrid({
             )}
         </div>
     );
-}
+});
+
+export default SpreadsheetGrid;

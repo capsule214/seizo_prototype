@@ -17,6 +17,11 @@ export default function SpreadsheetGridClient() {
     const deviceRangeRef = useRef(null);
     const workerRangeRef = useRef(null);
 
+    // 各グリッドへの imperative ハンドル（保存・キャンセル用）
+    const deviceGridRef = useRef(null);
+    const workerGridRef = useRef(null);
+    const [isDirty, setIsDirty] = useState(false);
+
     const alertTimerRef = useRef(null);
     const prevTabRef = useRef('device');
 
@@ -39,6 +44,22 @@ export default function SpreadsheetGridClient() {
         setAlertMessage(msg);
         clearTimeout(alertTimerRef.current);
         alertTimerRef.current = setTimeout(() => setAlertMessage(null), 4000);
+    }
+
+    async function handleSave() {
+        await Promise.all([
+            deviceGridRef.current?.saveChanges(),
+            workerGridRef.current?.saveChanges(),
+        ]);
+        setIsDirty(false);
+    }
+
+    async function handleCancel() {
+        await Promise.all([
+            deviceGridRef.current?.cancelChanges(),
+            workerGridRef.current?.cancelChanges(),
+        ]);
+        setIsDirty(false);
     }
 
     async function saveDisplaySettings(settings) {
@@ -134,6 +155,19 @@ export default function SpreadsheetGridClient() {
                     >{label}</button>
                 ))}
                 <div style={{ flex: 1 }} />
+                {isDirty && (
+                    <>
+                        <button
+                            onClick={handleSave}
+                            style={{ padding: '6px 14px', border: 'none', borderRadius: 6, background: '#2563eb', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                        >保存</button>
+                        <button
+                            onClick={handleCancel}
+                            style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13, marginLeft: 6 }}
+                        >キャンセル</button>
+                        <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 8px' }} />
+                    </>
+                )}
                 <button
                     onClick={() => setShowSettings(true)}
                     style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13 }}
@@ -150,9 +184,11 @@ export default function SpreadsheetGridClient() {
                 }}>
                     <SpreadsheetGrid
                         {...gridProps}
+                        ref={deviceGridRef}
                         mode="device"
                         jumpTarget={tab === 'device' ? jumpTarget : null}
                         onRangeChange={r => { deviceRangeRef.current = r; }}
+                        onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
                 </div>
 
@@ -164,9 +200,11 @@ export default function SpreadsheetGridClient() {
                 }}>
                     <SpreadsheetGrid
                         {...gridProps}
+                        ref={workerGridRef}
                         mode="worker"
                         jumpTarget={tab === 'worker' ? jumpTarget : null}
                         onRangeChange={r => { workerRangeRef.current = r; }}
+                        onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
                 </div>
 

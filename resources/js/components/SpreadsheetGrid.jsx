@@ -216,10 +216,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     onRangeChange, onDirtyChange,
 }, ref) {
     const today = new Date();
-    const [startDate, setStartDate] = useState(() => {
-        const d = new Date(today.getFullYear(), today.getMonth(), 1);
-        return dateToStr(d);
-    });
+    const [startDate, setStartDate] = useState(() => dateToStr(today));
     const [displayMonths, setDisplayMonths] = useState(4);
     const [deviceCount, setDeviceCount] = useState(1000);
     const [viewMode, setViewMode] = useState('day');
@@ -456,10 +453,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
 
     useEffect(() => {
         if (!scrollRef.current) return;
-        const today = TODAY_STR;
-        const col = dateToCol(startDate, today, viewMode, 8);
-        const x = col * colW - containerW / 2 + leftHdrW;
-        scrollRef.current.scrollLeft = Math.max(0, x);
+        scrollRef.current.scrollLeft = 0;
     }, []);
 
     const onScroll = useCallback(e => {
@@ -1137,13 +1131,20 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         }
         for (const arr of rowStartXMap.values()) arr.sort((a, b) => a.startX - b.startX);
 
+        const contentRight = totalCols * colW; // スクロール右端（最終表示日）
+
         for (const g of layoutGroups) {
             if (!g.plans) continue;
             for (const plan of g.plans) {
                 const startCol = planToStartCol(plan, startDate, viewMode);
                 const endCol = planToEndCol(plan, startDate, viewMode);
                 const x = startCol * colW;
-                const w = Math.max(colW, (endCol - startCol + 1) * colW);
+                if (x >= contentRight) continue; // 表示範囲外（右端超え）は描画しない
+                // 右端を最終表示日でクリップ
+                const w = Math.min(
+                    Math.max(colW, (endCol - startCol + 1) * colW),
+                    contentRight - x,
+                );
                 const absRow = g.startRow + plan.rowIdx;
                 const y = absRow * CELL_SIZE;
                 const h = CELL_SIZE;
@@ -1168,11 +1169,17 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 const barX = ghost ? ghostX : x;
                 const barY = ghost ? ghostY : y;
 
-                // 同一行の次の予定開始X（ラベルをそこでクリップ）
+                // 同一行の次の予定開始X（ラベルをそこでクリップ）、かつ右端を超えない
                 const rowArr = rowStartXMap.get(absRow) || [];
                 const myIdx = rowArr.findIndex(r => r.planId === plan.planId);
                 const nextBarX = (myIdx >= 0 && myIdx + 1 < rowArr.length) ? rowArr[myIdx + 1].startX : null;
-                const labelWidth = nextBarX !== null ? Math.max(0, nextBarX - x - HANDLE_W) : 9999;
+                // 表示開始日より前に始まるバーはラベル開始位置を左端（0）にクランプ
+                const labelLeft = Math.max(barX + HANDLE_W, 0);
+                const barRight  = barX + w;
+                const maxW1 = Math.max(0, barRight - HANDLE_W - labelLeft);                    // バー右端まで
+                const maxW2 = nextBarX !== null ? Math.max(0, nextBarX - labelLeft) : Infinity; // 次バー手前まで
+                const maxW3 = Math.max(0, contentRight - labelLeft);                            // コンテンツ右端まで
+                const labelWidth = Math.min(maxW1, maxW2, maxW3);
 
                 bars.push(
                     <div
@@ -1212,7 +1219,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                     <div
                         key={`lbl-${plan.planId}`}
                         style={{
-                            position: 'absolute', left: barX + HANDLE_W, top: barY,
+                            position: 'absolute', left: labelLeft, top: barY,
                             width: labelWidth, height: h,
                             display: 'flex', alignItems: 'center',
                             overflow: 'hidden', whiteSpace: 'nowrap',
@@ -1245,10 +1252,19 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 if (absRow < visRowStart || absRow > visRowEnd) continue;
 
                 const x = startCol * colW;
-                const w = Math.max(colW, (endCol - startCol + 1) * colW);
+                if (x >= totalCols * colW) continue; // 表示範囲外
+                const w = Math.min(
+                    Math.max(colW, (endCol - startCol + 1) * colW),
+                    totalCols * colW - x,
+                );
                 const y = absRow * CELL_SIZE;
 
                 if (x + w < scrollLeft || x > scrollLeft + containerW) continue;
+
+                // ラベル位置：バーが表示開始日より前に始まる場合は左端（x=0）にクランプ
+                const PAD = 3;
+                const locLabelLeft  = Math.max(x + PAD, 0);
+                const locLabelWidth = Math.max(0, Math.min(x + w - PAD - locLabelLeft, totalCols * colW - locLabelLeft));
 
                 bars.push(
                     <div
@@ -1259,17 +1275,24 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                             background: '#93c5fd',
                             border: '1px solid #3b82f6',
                             boxSizing: 'border-box', zIndex: 2,
-                            overflow: 'hidden', pointerEvents: 'none',
+                            pointerEvents: 'none',
+                        }}
+                    />
+                );
+                bars.push(
+                    <div
+                        key={`loc-ov-lbl-${plan.planId}`}
+                        style={{
+                            position: 'absolute', left: locLabelLeft, top: y,
+                            width: locLabelWidth, height: CELL_SIZE,
                             display: 'flex', alignItems: 'center',
+                            overflow: 'hidden', whiteSpace: 'nowrap',
+                            fontSize: 9, color: '#1e3a5f',
+                            pointerEvents: 'none', zIndex: 3,
+                            userSelect: 'none',
                         }}
                     >
-                        <div style={{
-                            fontSize: 9, color: '#1e3a5f', paddingLeft: 3,
-                            whiteSpace: 'nowrap', overflow: 'hidden',
-                            userSelect: 'none',
-                        }}>
-                            {plan.locationName}
-                        </div>
+                        {plan.locationName}
                     </div>
                 );
             }

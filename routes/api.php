@@ -8,6 +8,8 @@ use App\Http\Controllers\Api\TaskController;
 use App\Http\Controllers\Api\PlanController;
 use App\Http\Controllers\Api\DisplaySettingsController;
 use App\Http\Controllers\Api\SeedController;
+use App\Http\Controllers\Api\LocationController;
+use App\Http\Controllers\Api\LocationPlanController;
 
 // 認証不要
 Route::post('/login', [AuthController::class, 'login']);
@@ -29,6 +31,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/display-settings', [DisplaySettingsController::class, 'index']);
     Route::put('/display-settings', [DisplaySettingsController::class, 'update']);
+
+    Route::get('/location', [LocationController::class, 'index']);
+
+    Route::get('/location-plan',         [LocationPlanController::class, 'index']);
+    Route::post('/location-plan',        [LocationPlanController::class, 'store']);
+    Route::put('/location-plan/{id}',    [LocationPlanController::class, 'update']);
+    Route::delete('/location-plan',      [LocationPlanController::class, 'destroy']);
 
     Route::post('/seed', [SeedController::class, 'seed']);
 });

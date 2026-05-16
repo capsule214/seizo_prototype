@@ -8,6 +8,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
     const [serials, setSerials] = useState([]);
     const [workers, setWorkers] = useState([]);
     const [tasks, setTasks] = useState([]);
+    const [locations, setLocations] = useState([]);
     const [displaySettings, setDisplaySettings] = useState({ selectedKisyuIds: [], selectedWorkerIds: [] });
     const [showSettings, setShowSettings] = useState(false);
     const [loading, setLoading] = useState(true);
@@ -19,10 +20,12 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
     const workerRangeRef = useRef(null);
 
     // 各グリッドへの imperative ハンドル（保存・キャンセル用）
-    const deviceGridRef = useRef(null);
-    const workerGridRef = useRef(null);
+    const deviceGridRef   = useRef(null);
+    const workerGridRef   = useRef(null);
+    const locationGridRef = useRef(null);
     const [isDirty, setIsDirty] = useState(false);
 
+    const locationRangeRef = useRef(null);
     const alertTimerRef = useRef(null);
     const prevTabRef = useRef('device');
 
@@ -32,11 +35,13 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
             apiFetch('/worker').then(r => r.json()),
             apiFetch('/task').then(r => r.json()),
             apiFetch('/display-settings').then(r => r.json()),
-        ]).then(([s, w, t, ds]) => {
+            apiFetch('/location').then(r => r.json()),
+        ]).then(([s, w, t, ds, loc]) => {
             setSerials(s);
             setWorkers(w);
             setTasks(t);
             setDisplaySettings(ds);
+            setLocations(loc);
             setLoading(false);
         }).catch(() => setLoading(false));
     }, []);
@@ -56,6 +61,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
         await Promise.all([
             deviceGridRef.current?.saveChanges(),
             workerGridRef.current?.saveChanges(),
+            locationGridRef.current?.saveChanges(),
         ]);
         setIsDirty(false);
     }
@@ -64,6 +70,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
         await Promise.all([
             deviceGridRef.current?.cancelChanges(),
             workerGridRef.current?.cancelChanges(),
+            locationGridRef.current?.cancelChanges(),
         ]);
         setIsDirty(false);
     }
@@ -137,7 +144,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
     }
 
     const gridProps = {
-        serials, workers, tasks, displaySettings,
+        serials, workers, tasks, locations, displaySettings,
         onJumpToOtherTab: handleJumpToOtherTab,
         onJumpHandled: handleJumpHandled,
         onJumpError: handleJumpError,
@@ -147,7 +154,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
             {/* タブバー */}
             <div style={{ display: 'flex', alignItems: 'center', background: '#fff', borderBottom: '2px solid #e5e7eb', padding: '0 12px', flexShrink: 0 }}>
-                {[['device', '装置'], ['worker', '担当者']].map(([key, label]) => (
+                {[['device', '装置'], ['worker', '担当者'], ['location', '場所']].map(([key, label]) => (
                     <button
                         key={key}
                         onClick={() => setTab(key)}
@@ -215,6 +222,22 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                         mode="worker"
                         jumpTarget={tab === 'worker' ? jumpTarget : null}
                         onRangeChange={r => { workerRangeRef.current = r; }}
+                        onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
+                    />
+                </div>
+
+                {/* 場所タブ */}
+                <div style={{
+                    position: 'absolute', inset: 0,
+                    visibility: tab === 'location' ? 'visible' : 'hidden',
+                    pointerEvents: tab === 'location' ? 'auto' : 'none',
+                }}>
+                    <SpreadsheetGrid
+                        {...gridProps}
+                        ref={locationGridRef}
+                        mode="location"
+                        jumpTarget={null}
+                        onRangeChange={r => { locationRangeRef.current = r; }}
                         onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
                 </div>

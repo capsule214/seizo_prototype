@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import DatePicker from './DatePicker';
 
 const TIME_SLOTS = [
@@ -25,19 +25,52 @@ function parseDate(s) {
     return { date: d, h: 8, m: 0 };
 }
 
-export default function ScheduleDialog({ plan, serials, tasks, workers, gridMode, onSave, onClose }) {
+export default function ScheduleDialog({ plan, serials, tasks, workers, locations, gridMode, initialData, onSave, onClose }) {
     const init = plan || {};
-    const sd = parseDate(init.startDate || '');
-    const ed = parseDate(init.endDate || '');
+    const sd = parseDate(init.startDate || initialData?.startDate || '');
+    const ed = parseDate(init.endDate || initialData?.endDate || '');
+
+    // 機種ドロップダウン用：serials から kisyu 一覧を生成（sortNo 順）
+    const kisyuList = useMemo(() => {
+        const map = new Map();
+        for (const s of serials) {
+            if (!map.has(s.kisyuId)) map.set(s.kisyuId, { kisyuId: s.kisyuId, kisyuName: s.kisyuName, sortNo: s.sortNo ?? 0 });
+        }
+        return [...map.values()].sort((a, b) => a.sortNo - b.sortNo || a.kisyuId - b.kisyuId);
+    }, [serials]);
+
+    // 初期 kisyuId：編集中プランまたは初期データから解決
+    const initKisyuId = (() => {
+        const initSerialId = init.serialId || initialData?.serialId;
+        if (initSerialId) {
+            const found = serials.find(s => s.serialId == initSerialId);
+            if (found) return found.kisyuId;
+        }
+        return kisyuList[0]?.kisyuId ?? '';
+    })();
 
     const [startDate, setStartDate] = useState(sd.date || new Date().toISOString().slice(0, 10));
     const [startH, setStartH] = useState(sd.h || 8);
     const [endDate, setEndDate] = useState(ed.date || new Date().toISOString().slice(0, 10));
     const [endH, setEndH] = useState(ed.h || 21);
-    const [serialId, setSerialId] = useState(init.serialId || (serials[0]?.serialId ?? ''));
+    const [serialId, setSerialId] = useState(init.serialId || initialData?.serialId || (serials[0]?.serialId ?? ''));
     const [taskId, setTaskId] = useState(init.taskId || (tasks[0]?.taskId ?? ''));
     const [workerId, setWorkerId] = useState(init.workerId || (workers[0]?.workerId ?? ''));
+    const [locationId, setLocationId] = useState(init.locationId || initialData?.locationId || (locations?.[0]?.locationId ?? ''));
+    const [kisyuId, setKisyuId] = useState(initKisyuId);
     const [error, setError] = useState('');
+
+    // 機種が変わったら整番を先頭に自動切り替え
+    const filteredSerials = useMemo(
+        () => serials.filter(s => s.kisyuId == kisyuId),
+        [serials, kisyuId],
+    );
+
+    function handleKisyuChange(newKisyuId) {
+        setKisyuId(newKisyuId);
+        const first = serials.find(s => s.kisyuId == newKisyuId);
+        if (first) setSerialId(first.serialId);
+    }
 
     function slotForH(h, type) {
         for (const s of TIME_SLOTS) {
@@ -52,7 +85,11 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, gridMode
         const ed2 = toDateStr(endDate, endH, 0);
         if (sd2 > ed2) { setError('開始日時が終了日時より後になっています'); return; }
         setError('');
-        onSave({ serialId: Number(serialId), taskId: Number(taskId), workerId: Number(workerId), startDate: sd2, endDate: ed2 });
+        if (gridMode === 'location') {
+            onSave({ locationId: Number(locationId), serialId: Number(serialId), startDate: sd2, endDate: ed2 });
+        } else {
+            onSave({ serialId: Number(serialId), taskId: Number(taskId), workerId: Number(workerId), startDate: sd2, endDate: ed2 });
+        }
     }
 
     const serial = serials.find(s => s.serialId == serialId);
@@ -127,50 +164,89 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, gridMode
                 </div>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    <div>
-                        <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>装置</label>
-                        {gridMode === 'device' ? (
-                            <input
-                                readOnly
-                                value={serial ? `${serial.kisyuName} / ${serial.serialNo}` : ''}
-                                style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#f9fafb' }}
-                            />
-                        ) : (
-                            <select
-                                value={serialId}
-                                onChange={e => setSerialId(e.target.value)}
-                                style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
-                            >
-                                {serials.map(s => (
-                                    <option key={s.serialId} value={s.serialId}>{s.kisyuName} / {s.serialNo}</option>
-                                ))}
-                            </select>
-                        )}
-                    </div>
-                    <div>
-                        <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>工程</label>
-                        <select
-                            value={taskId}
-                            onChange={e => setTaskId(e.target.value)}
-                            style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
-                        >
-                            {tasks.map(t => (
-                                <option key={t.taskId} value={t.taskId}>{t.taskName}</option>
-                            ))}
-                        </select>
-                    </div>
-                    <div>
-                        <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>担当者</label>
-                        <select
-                            value={workerId}
-                            onChange={e => setWorkerId(e.target.value)}
-                            style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
-                        >
-                            {workers.map(w => (
-                                <option key={w.workerId} value={w.workerId}>{w.workerName}</option>
-                            ))}
-                        </select>
-                    </div>
+                    {gridMode === 'location' ? (
+                        <>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>場所</label>
+                                <input
+                                    readOnly
+                                    value={locations?.find(l => l.locationId == locationId)?.locationName || ''}
+                                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#f9fafb' }}
+                                />
+                            </div>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>機種</label>
+                                <select
+                                    value={kisyuId}
+                                    onChange={e => handleKisyuChange(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                >
+                                    {kisyuList.map(k => (
+                                        <option key={k.kisyuId} value={k.kisyuId}>{k.kisyuName}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>整番</label>
+                                <select
+                                    value={serialId}
+                                    onChange={e => setSerialId(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                >
+                                    {filteredSerials.map(s => (
+                                        <option key={s.serialId} value={s.serialId}>{s.serialNo}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </>
+                    ) : (
+                        <>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>装置</label>
+                                {gridMode === 'device' ? (
+                                    <input
+                                        readOnly
+                                        value={serial ? `${serial.kisyuName} / ${serial.serialNo}` : ''}
+                                        style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13, background: '#f9fafb' }}
+                                    />
+                                ) : (
+                                    <select
+                                        value={serialId}
+                                        onChange={e => setSerialId(e.target.value)}
+                                        style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                    >
+                                        {serials.map(s => (
+                                            <option key={s.serialId} value={s.serialId}>{s.kisyuName} / {s.serialNo}</option>
+                                        ))}
+                                    </select>
+                                )}
+                            </div>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>工程</label>
+                                <select
+                                    value={taskId}
+                                    onChange={e => setTaskId(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                >
+                                    {tasks.map(t => (
+                                        <option key={t.taskId} value={t.taskId}>{t.taskName}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label style={{ fontSize: 12, color: '#6b7280', display: 'block', marginBottom: 3 }}>担当者</label>
+                                <select
+                                    value={workerId}
+                                    onChange={e => setWorkerId(e.target.value)}
+                                    style={{ width: '100%', padding: '6px 10px', border: '1px solid #d1d5db', borderRadius: 6, fontSize: 13 }}
+                                >
+                                    {workers.map(w => (
+                                        <option key={w.workerId} value={w.workerId}>{w.workerName}</option>
+                                    ))}
+                                </select>
+                            </div>
+                        </>
+                    )}
                 </div>
 
                 {error && <div style={{ color: '#ef4444', fontSize: 12, marginTop: 8 }}>{error}</div>}

@@ -9,6 +9,8 @@ use App\Models\KmTeam;
 use App\Models\KmWorker;
 use App\Models\KmTask;
 use App\Models\KdPlan;
+use App\Models\KmLocation;
+use App\Models\KdLocationPlan;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -38,13 +40,23 @@ class SeedController extends Controller
         $this->lcgSeed = $seedNum;
 
         DB::statement('PRAGMA foreign_keys = OFF');
+        KdLocationPlan::truncate();
         KdPlan::truncate();
         KdSerial::truncate();
         KmWorker::truncate();
         KmTeam::truncate();
         KmTask::truncate();
         DmKisyu::truncate();
+        KmLocation::truncate();
         DB::statement('PRAGMA foreign_keys = ON');
+
+        // 場所マスタ（1F〜5F）を作成
+        $locationNames = ['1F', '2F', '3F', '4F', '5F'];
+        $locationIds = [];
+        foreach ($locationNames as $i => $name) {
+            $loc = KmLocation::create(['location_name' => $name, 'sort_no' => $i + 1]);
+            $locationIds[] = $loc->location_id;
+        }
 
         $kisyuNames = ['機種A', '機種B', '機種C', '機種D', '機種E'];
         $kisyuIds = [];
@@ -141,12 +153,54 @@ class SeedController extends Controller
             KdPlan::insert($chunk);
         }
 
+        // 場所予定を生成（装置予定の約1/4の件数）
+        $locationPlanCount = max(1, intdiv($count, 4));
+        $locationPlans = [];
+        for ($i = 0; $i < $locationPlanCount; $i++) {
+            $locationIdx = $this->lcgRange(0, count($locationIds) - 1);
+            $serialIdx   = $this->lcgRange(0, count($serialIds) - 1);
+            $startSlot   = $this->lcgRange(0, $totalSlots - 1);
+            $duration    = $this->lcgRange(1, 8);
+
+            $slotHours    = [8, 10, 13, 15, 17, 19];
+            $slotEndHours = [10, 12, 15, 17, 19, 21];
+
+            $startDay       = intdiv($startSlot, 6);
+            $startSlotOfDay = $startSlot % 6;
+            $endSlot        = $startSlot + $duration - 1;
+            $endDay         = intdiv($endSlot, 6);
+            $endSlotOfDay   = $endSlot % 6;
+
+            $startTs = $base + $startDay * 86400;
+            $endTs   = $base + $endDay * 86400;
+
+            $startH = $slotHours[$startSlotOfDay];
+            $endH   = $slotEndHours[$endSlotOfDay];
+
+            $startDate2 = date('Y-m-d', $startTs) . 'T' . str_pad($startH, 2, '0', STR_PAD_LEFT) . ':00:00';
+            $endDate2   = date('Y-m-d', $endTs)   . 'T' . str_pad($endH, 2, '0', STR_PAD_LEFT)   . ':00:00';
+
+            $locationPlans[] = [
+                'location_id' => $locationIds[$locationIdx],
+                'serial_id'   => $serialIds[$serialIdx],
+                'start_date'  => $startDate2,
+                'end_date'    => $endDate2,
+                'deleted'     => 0,
+            ];
+        }
+
+        foreach (array_chunk($locationPlans, 200) as $chunk) {
+            KdLocationPlan::insert($chunk);
+        }
+
         return response()->json([
-            'ok'      => true,
-            'count'   => $count,
-            'serials' => count($serialIds),
-            'workers' => count($workerIds),
-            'tasks'   => count($taskIds),
+            'ok'            => true,
+            'count'         => $count,
+            'serials'       => count($serialIds),
+            'workers'       => count($workerIds),
+            'tasks'         => count($taskIds),
+            'locations'     => count($locationIds),
+            'locationPlans' => count($locationPlans),
         ]);
     }
 }

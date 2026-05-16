@@ -10,6 +10,7 @@ const CELL_SIZE = 20;
 const HDR_H = 20;
 const TOTAL_HDR_H = HDR_H * 4;
 const MIN_ROWS = 3;
+const MIN_ROWS_LOCATION = 1;
 const BUFFER_ROWS = 12;
 const DEV_HDR_W = 202;
 const ASGN_HDR_W = 80;
@@ -103,10 +104,10 @@ function colToDateTime(startDate, col, type, viewMode) {
     }
 }
 
-function layoutPlans(plans, groupKey, groups, viewMode, startDate) {
+function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN_ROWS) {
     const groupMap = {};
     for (const g of groups) {
-        groupMap[g.id] = { ...g, rows: Array.from({ length: MIN_ROWS }, () => null), plans: [] };
+        groupMap[g.id] = { ...g, rows: Array.from({ length: minRows }, () => null), plans: [] };
     }
 
     const sorted = [...plans].sort((a, b) => {
@@ -115,7 +116,7 @@ function layoutPlans(plans, groupKey, groups, viewMode, startDate) {
     });
 
     for (const plan of sorted) {
-        const gid = groupKey === 'device' ? plan.serialId : plan.workerId;
+        const gid = groupKey === 'device' ? plan.serialId : groupKey === 'worker' ? plan.workerId : plan.locationId;
         const grp = groupMap[gid];
         if (!grp) continue;
 
@@ -141,8 +142,8 @@ function layoutPlans(plans, groupKey, groups, viewMode, startDate) {
     const result = [];
     for (const g of groups) {
         const grp = groupMap[g.id];
-        if (!grp) { result.push({ ...g, startRow, numRows: MIN_ROWS, plans: [] }); startRow += MIN_ROWS; continue; }
-        const numRows = Math.max(MIN_ROWS, grp.rows.length);
+        if (!grp) { result.push({ ...g, startRow, numRows: minRows, plans: [] }); startRow += minRows; continue; }
+        const numRows = Math.max(minRows, grp.rows.length);
         result.push({ ...grp, startRow, numRows });
         startRow += numRows;
     }
@@ -164,7 +165,7 @@ function computeGaps(fetchedRanges, from, to) {
 }
 
 const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
-    mode, serials, workers, tasks, displaySettings,
+    mode, serials, workers, tasks, locations, displaySettings,
     onJumpToOtherTab, jumpTarget, onJumpHandled, onJumpError,
     onRangeChange, onDirtyChange,
 }, ref) {
@@ -210,6 +211,8 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const prevJumpTargetRef = useRef(null);
 
     const leftHdrW = mode === 'device' ? DEV_HDR_W : ASGN_HDR_W;
+    const planEndpoint = mode === 'location' ? '/location-plan' : '/plan';
+    const planMinRows  = mode === 'location' ? MIN_ROWS_LOCATION : MIN_ROWS;
 
     const endDate = useMemo(() => addDays(startDate, displayMonths * 30), [startDate, displayMonths]);
 
@@ -240,6 +243,12 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 label2: ser.serialNo,
                 kisyuId: ser.kisyuId,
             }));
+        } else if (mode === 'location') {
+            return (locations || []).map(loc => ({
+                id: loc.locationId,
+                label1: loc.locationName,
+                label2: '',
+            }));
         } else {
             let w = workers;
             if (selectedWorkerIds.length > 0) {
@@ -247,12 +256,12 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             }
             return w.map(wr => ({ id: wr.workerId, label1: wr.workerName, label2: '', teamName: wr.teamName }));
         }
-    }, [mode, serials, workers, displaySettings, deviceCount]);
+    }, [mode, serials, workers, locations, displaySettings, deviceCount]);
 
     const { groups: layoutGroups, totalRows } = useMemo(() => {
-        const groupKey = mode === 'device' ? 'device' : 'worker';
-        return layoutPlans(plans.filter(p => !p.deleted), groupKey, filteredGroups, viewMode, startDate);
-    }, [plans, filteredGroups, mode, viewMode, startDate]);
+        const groupKey = mode === 'device' ? 'device' : mode === 'worker' ? 'worker' : 'location';
+        return layoutPlans(plans.filter(p => !p.deleted), groupKey, filteredGroups, viewMode, startDate, planMinRows);
+    }, [plans, filteredGroups, mode, viewMode, startDate, planMinRows]);
 
     // 矩形選択のクロージャ内から常に最新レイアウトを参照できるようにする
     layoutGroupsRef.current = layoutGroups;
@@ -275,7 +284,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         const gaps = computeGaps(fetchedRangesRef.current, from, to);
         for (const gap of gaps) {
             try {
-                const res = await apiFetch(`/plan?from=${gap.from}&to=${gap.to}`);
+                const res = await apiFetch(`${planEndpoint}?from=${gap.from}&to=${gap.to}`);
                 const data = await res.json();
                 setPlans(prev => {
                     const existingIds = new Set(prev.map(p => p.planId));
@@ -303,7 +312,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             // 新規作成（貼り付け）：仮IDを DB の本IDで置き換える
             for (const [tempId, payload] of creates) {
                 try {
-                    const res = await apiFetch('/plan', {
+                    const res = await apiFetch(planEndpoint, {
                         method: 'POST',
                             body: JSON.stringify(payload),
                     });
@@ -315,7 +324,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             // 削除（DB 上に存在する正のIDのみ）
             if (deletes.size > 0) {
                 try {
-                    await apiFetch('/plan', {
+                    await apiFetch(planEndpoint, {
                         method: 'DELETE',
                             body: JSON.stringify({ ids: [...deletes].map(String) }),
                     });
@@ -326,7 +335,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             for (const [planId, payload] of updates) {
                 if (deletes.has(planId)) continue;
                 try {
-                    await apiFetch(`/plan/${planId}`, {
+                    await apiFetch(`${planEndpoint}/${planId}`, {
                         method: 'PUT',
                             body: JSON.stringify(payload),
                     });
@@ -577,21 +586,19 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             const newEndDate = colToDateTime(startDate, newEndCol, 'end', viewMode);
 
             // 移動先グループが確定している場合は全プランを同一グループへ
-            let newSerialId = dp.serialId;
-            let newWorkerId = dp.workerId;
+            let newSerialId   = dp.serialId;
+            let newWorkerId   = dp.workerId;
+            let newLocationId = dp.locationId;
             if (destGroupId !== null) {
-                if (mode === 'device') newSerialId = destGroupId;
-                else newWorkerId = destGroupId;
+                if (mode === 'device')   newSerialId   = destGroupId;
+                else if (mode === 'worker') newWorkerId = destGroupId;
+                else newLocationId = destGroupId;
             }
 
             // API は呼ばず、ローカル state を即時更新して保留リストに積む
-            const payload = {
-                serialId: newSerialId,
-                taskId: dp.taskId,
-                workerId: newWorkerId,
-                startDate: newStartDate,
-                endDate: newEndDate,
-            };
+            const payload = mode === 'location'
+                ? { locationId: newLocationId, serialId: newSerialId, startDate: newStartDate, endDate: newEndDate }
+                : { serialId: newSerialId, taskId: dp.taskId, workerId: newWorkerId, startDate: newStartDate, endDate: newEndDate };
             setPlans(prev => prev.map(p =>
                 p.planId === dp.planId ? { ...p, ...payload } : p
             ));
@@ -628,8 +635,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                     setScheduleDialog({
                         plan: null,
                         initialData: {
-                            serialId: mode === 'device' ? g?.id : null,
-                            workerId: mode === 'worker' ? g?.id : null,
+                            locationId: mode === 'location' ? g?.id : null,
+                            serialId:   mode === 'device'   ? g?.id : null,
+                            workerId:   mode === 'worker'   ? g?.id : null,
                             startDate: dateStr,
                             endDate: endStr,
                         }
@@ -655,6 +663,12 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         }
         const isMulti = alreadyInMulti;
         const n = isMulti ? selected.size : 1;
+        const jumpItem = mode === 'device'
+            ? { label: '担当者予定を表示', onClick: () => onJumpToOtherTab && onJumpToOtherTab(plan, 'worker') }
+            : mode === 'worker'
+            ? { label: '装置予定を表示',  onClick: () => onJumpToOtherTab && onJumpToOtherTab(plan, 'device') }
+            : null;
+
         const items = isMulti ? [
             { label: `${n}件コピー`, onClick: () => {
                 const toCopy = [...selected].map(id => plans.find(p => p.planId === id)).filter(Boolean);
@@ -670,11 +684,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             { label: 'コピー', onClick: () => setCopied([plan]) },
             'separator',
             { label: '削除', danger: true, onClick: () => deletePlans([plan.planId]) },
-            'separator',
-            {
-                label: mode === 'device' ? '担当者予定を表示' : '装置予定を表示',
-                onClick: () => onJumpToOtherTab && onJumpToOtherTab(plan, mode === 'device' ? 'worker' : 'device'),
-            },
+            ...(jumpItem ? ['separator', jumpItem] : []),
         ];
         setContextMenu({ x: e.clientX, y: e.clientY, items });
     }
@@ -703,9 +713,10 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         const targetGroup = getGroupAtRow(targetRow);
         if (!targetGroup) return; // グループが特定できない場合は貼り付けしない
 
-        // 貼り付け先の serialId / workerId（全プランに共通で適用）
-        const targetSerialId = mode === 'device' ? targetGroup.id : null;
-        const targetWorkerId = mode === 'worker' ? targetGroup.id : null;
+        // 貼り付け先の serialId / workerId / locationId（全プランに共通で適用）
+        const targetSerialId   = mode === 'device'   ? targetGroup.id : null;
+        const targetWorkerId   = mode === 'worker'   ? targetGroup.id : null;
+        const targetLocationId = mode === 'location' ? targetGroup.id : null;
 
         // 先頭プランの開始列を基準に列オフセットを算出
         const firstStartCol = planToStartCol(copied[0], startDate, viewMode);
@@ -718,11 +729,14 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             const newStart = colToDateTime(startDate, Math.max(0, sc), 'start', viewMode);
             const newEnd   = colToDateTime(startDate, Math.max(0, ec), 'end', viewMode);
 
-            // 全プランを貼り付け先の装置/担当者に統一する
-            const newSerialId = mode === 'device' ? targetSerialId : p.serialId;
-            const newWorkerId = mode === 'worker' ? targetWorkerId : p.workerId;
+            // 全プランを貼り付け先の場所/装置/担当者に統一する
+            const newSerialId   = mode === 'device'   ? targetSerialId   : p.serialId;
+            const newWorkerId   = mode === 'worker'   ? targetWorkerId   : p.workerId;
+            const newLocationId = mode === 'location' ? targetLocationId : p.locationId;
 
-            const payload = { serialId: newSerialId, taskId: p.taskId, workerId: newWorkerId, startDate: newStart, endDate: newEnd };
+            const payload = mode === 'location'
+                ? { locationId: newLocationId, serialId: newSerialId, startDate: newStart, endDate: newEnd }
+                : { serialId: newSerialId, taskId: p.taskId, workerId: newWorkerId, startDate: newStart, endDate: newEnd };
             const tempId = tempIdCounterRef.current--;
             newPlans.push({ ...p, planId: tempId, ...payload });
             pendingCreatesRef.current.set(tempId, payload);
@@ -735,22 +749,29 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     async function savePlan(data) {
         const dialog = scheduleDialog;
         setScheduleDialog(null);
-        const payload = {
-            serialId: data.serialId || (mode === 'device' ? dialog.initialData?.serialId : serials[0]?.serialId),
-            taskId: data.taskId,
-            workerId: data.workerId,
-            startDate: data.startDate,
-            endDate: data.endDate,
-        };
+        const payload = mode === 'location'
+            ? {
+                locationId: data.locationId || dialog.initialData?.locationId,
+                serialId:   data.serialId,
+                startDate:  data.startDate,
+                endDate:    data.endDate,
+            }
+            : {
+                serialId:  data.serialId || (mode === 'device' ? dialog.initialData?.serialId : serials[0]?.serialId),
+                taskId:    data.taskId,
+                workerId:  data.workerId,
+                startDate: data.startDate,
+                endDate:   data.endDate,
+            };
         if (dialog.plan) {
-            const res = await apiFetch(`/plan/${dialog.plan.planId}`, {
+            const res = await apiFetch(`${planEndpoint}/${dialog.plan.planId}`, {
                 method: 'PUT',
                 body: JSON.stringify(payload),
             });
             const updated = await res.json();
             setPlans(prev => prev.map(p => p.planId === dialog.plan.planId ? { ...p, ...updated } : p));
         } else {
-            const res = await apiFetch('/plan', {
+            const res = await apiFetch(planEndpoint, {
                 method: 'POST',
                 body: JSON.stringify(payload),
             });
@@ -1071,9 +1092,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 );
 
                 // ラベル（バー外にはみ出し可、次のバー手前でクリップ）
-                const label = plan.workerName
-                    ? `${plan.taskName} ${plan.workerName}`
-                    : plan.taskName;
+                const label = mode === 'location'
+                    ? (plan.serialNo ? `${plan.kisyuName} ${plan.serialNo}` : '')
+                    : (plan.workerName ? `${plan.taskName} ${plan.workerName}` : plan.taskName);
                 labels.push(
                     <div
                         key={`lbl-${plan.planId}`}
@@ -1115,7 +1136,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                             <div style={{ fontSize: 10, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label2}</div>
                         </>
                     ) : (
-                        <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label1}</div>
+                        <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>{g.label1}</div>
                     )}
                 </div>
             );
@@ -1147,12 +1168,16 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                         <option key={n} value={n}>{n}ヶ月</option>
                     ))}
                 </select>
-                <select value={deviceCount} onChange={e => setDeviceCount(Number(e.target.value))} style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}>
-                    {[100, 200, 500, 1000, 2000, 5000].map(n => (
-                        <option key={n} value={n}>{n}件</option>
-                    ))}
-                </select>
-                <button onClick={handleSeedApply} style={{ padding: '3px 10px', border: '1px solid #d1d5db', borderRadius: 4, background: '#2563eb', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>適用</button>
+                {mode !== 'location' && (
+                    <>
+                        <select value={deviceCount} onChange={e => setDeviceCount(Number(e.target.value))} style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}>
+                            {[100, 200, 500, 1000, 2000, 5000].map(n => (
+                                <option key={n} value={n}>{n}件</option>
+                            ))}
+                        </select>
+                        <button onClick={handleSeedApply} style={{ padding: '3px 10px', border: '1px solid #d1d5db', borderRadius: 4, background: '#2563eb', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>適用</button>
+                    </>
+                )}
                 <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 2px' }} />
                 <button onClick={() => setViewMode('day')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'day' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'day' ? '#eff6ff' : '#fff', color: viewMode === 'day' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>日単位</button>
                 <button onClick={() => setViewMode('slot')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'slot' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'slot' ? '#eff6ff' : '#fff', color: viewMode === 'slot' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>時間割</button>
@@ -1162,7 +1187,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
                 {/* 左固定ヘッダー上部コーナー */}
                 <div style={{ position: 'absolute', left: 0, top: 0, width: leftHdrW, height: TOTAL_HDR_H, background: '#f3f4f6', borderRight: '1px solid #d1d5db', borderBottom: '1px solid #9ca3af', zIndex: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600 }}>
-                    {mode === 'device' ? '装置' : '担当者'}
+                    {mode === 'device' ? '装置' : mode === 'location' ? '場所' : '担当者'}
                 </div>
 
                 {/* 左固定列（行）*/}
@@ -1236,7 +1261,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
 
             {/* ステータスバー */}
             <div style={{ padding: '3px 10px', background: '#f9fafb', borderTop: '1px solid #e5e7eb', fontSize: 11, color: '#6b7280', display: 'flex', gap: 12, flexShrink: 0 }}>
-                <span>{groupCount} {mode === 'device' ? '装置' : '担当者'} / {totalRows} 行 × {daysBetween(startDate, endDate)} 日</span>
+                <span>{groupCount} {mode === 'device' ? '装置' : mode === 'location' ? '場所' : '担当者'} / {totalRows} 行 × {daysBetween(startDate, endDate)} 日</span>
                 <span>予定 {planCount} 件</span>
                 {selected.size > 0 && <span style={{ color: '#2563eb' }}>{selected.size}件選択中</span>}
                 {copied.length > 0 && <span style={{ color: '#059669' }}>{copied.length}件コピー済み</span>}
@@ -1247,9 +1272,11 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             {scheduleDialog && (
                 <ScheduleDialog
                     plan={scheduleDialog.plan}
+                    initialData={scheduleDialog.initialData}
                     serials={serials}
                     tasks={tasks}
                     workers={workers}
+                    locations={locations}
                     gridMode={mode}
                     onSave={savePlan}
                     onClose={() => setScheduleDialog(null)}

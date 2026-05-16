@@ -1,8 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import SpreadsheetGrid from './SpreadsheetGrid';
 import DisplaySettingsDialog from './DisplaySettingsDialog';
+import { apiFetch } from '../lib/api';
 
-export default function SpreadsheetGridClient() {
+export default function SpreadsheetGridClient({ user, onLogout }) {
     const [tab, setTab] = useState('device');
     const [serials, setSerials] = useState([]);
     const [workers, setWorkers] = useState([]);
@@ -27,10 +28,10 @@ export default function SpreadsheetGridClient() {
 
     useEffect(() => {
         Promise.all([
-            fetch('/api/serial').then(r => r.json()),
-            fetch('/api/worker').then(r => r.json()),
-            fetch('/api/task').then(r => r.json()),
-            fetch('/api/display-settings').then(r => r.json()),
+            apiFetch('/serial').then(r => r.json()),
+            apiFetch('/worker').then(r => r.json()),
+            apiFetch('/task').then(r => r.json()),
+            apiFetch('/display-settings').then(r => r.json()),
         ]).then(([s, w, t, ds]) => {
             setSerials(s);
             setWorkers(w);
@@ -39,6 +40,11 @@ export default function SpreadsheetGridClient() {
             setLoading(false);
         }).catch(() => setLoading(false));
     }, []);
+
+    async function handleLogout() {
+        await apiFetch('/logout', { method: 'POST' });
+        onLogout();
+    }
 
     function showAlert(msg) {
         setAlertMessage(msg);
@@ -65,9 +71,8 @@ export default function SpreadsheetGridClient() {
     async function saveDisplaySettings(settings) {
         setDisplaySettings(settings);
         setShowSettings(false);
-        await fetch('/api/display-settings', {
+        await apiFetch('/display-settings', {
             method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings),
         });
     }
@@ -172,6 +177,12 @@ export default function SpreadsheetGridClient() {
                     onClick={() => setShowSettings(true)}
                     style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13 }}
                 >表示設定</button>
+                <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
+                <span style={{ fontSize: 12, color: '#6b7280' }}>{user?.name}</span>
+                <button
+                    onClick={handleLogout}
+                    style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13 }}
+                >ログアウト</button>
             </div>
 
             {/* グリッド — 両タブ常時マウント。visibility で表示/非表示を切り替え */}

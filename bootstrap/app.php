@@ -12,7 +12,7 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware): void {
-        //
+        $middleware->statefulApi();  // Sanctum SPA 認証（同一ドメイン Cookie セッション）
     })
     ->withExceptions(function (Exceptions $exceptions): void {
         //

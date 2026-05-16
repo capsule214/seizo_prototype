@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { getDateType } from '../lib/holidays';
 import { getColor } from '../lib/colors';
+import { apiFetch } from '../lib/api';
 import ContextMenu from './ContextMenu';
 import BarTooltip from './BarTooltip';
 import ScheduleDialog from './ScheduleDialog';
@@ -274,7 +275,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         const gaps = computeGaps(fetchedRangesRef.current, from, to);
         for (const gap of gaps) {
             try {
-                const res = await fetch(`/api/plan?from=${gap.from}&to=${gap.to}`);
+                const res = await apiFetch(`/plan?from=${gap.from}&to=${gap.to}`);
                 const data = await res.json();
                 setPlans(prev => {
                     const existingIds = new Set(prev.map(p => p.planId));
@@ -302,10 +303,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             // 新規作成（貼り付け）：仮IDを DB の本IDで置き換える
             for (const [tempId, payload] of creates) {
                 try {
-                    const res = await fetch('/api/plan', {
+                    const res = await apiFetch('/plan', {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
+                            body: JSON.stringify(payload),
                     });
                     const newPlan = await res.json();
                     setPlans(prev => prev.map(p => p.planId === tempId ? { ...p, ...newPlan } : p));
@@ -315,10 +315,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             // 削除（DB 上に存在する正のIDのみ）
             if (deletes.size > 0) {
                 try {
-                    await fetch('/api/plan', {
+                    await apiFetch('/plan', {
                         method: 'DELETE',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ ids: [...deletes].map(String) }),
+                            body: JSON.stringify({ ids: [...deletes].map(String) }),
                     });
                 } catch (err) { console.error('saveChanges delete error', err); }
             }
@@ -327,10 +326,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             for (const [planId, payload] of updates) {
                 if (deletes.has(planId)) continue;
                 try {
-                    await fetch(`/api/plan/${planId}`, {
+                    await apiFetch(`/plan/${planId}`, {
                         method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
+                            body: JSON.stringify(payload),
                     });
                 } catch (err) { console.error('saveChanges update error', err); }
             }
@@ -745,17 +743,15 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             endDate: data.endDate,
         };
         if (dialog.plan) {
-            const res = await fetch(`/api/plan/${dialog.plan.planId}`, {
+            const res = await apiFetch(`/plan/${dialog.plan.planId}`, {
                 method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
             const updated = await res.json();
             setPlans(prev => prev.map(p => p.planId === dialog.plan.planId ? { ...p, ...updated } : p));
         } else {
-            const res = await fetch('/api/plan', {
+            const res = await apiFetch('/plan', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
             });
             const newPlan = await res.json();
@@ -845,7 +841,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     async function handleSeedApply() {
         fetchedRangesRef.current = [];
         setPlans([]);
-        await fetch('/api/seed', {
+        await apiFetch('/seed', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ count: deviceCount, baseDate: startDate, months: displayMonths }),

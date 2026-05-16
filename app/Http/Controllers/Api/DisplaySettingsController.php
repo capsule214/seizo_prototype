@@ -18,7 +18,7 @@ class DisplaySettingsController extends Controller
             ->value('value');
 
         if ($value === null) {
-            return response()->json(['selectedKisyuIds' => [], 'selectedWorkerIds' => []]);
+            return response()->json(['selectedKisyuIds' => [], 'selectedWorkerIds' => [], 'showLocationInDevice' => false]);
         }
 
         return response()->json(json_decode($value, true));
@@ -26,7 +26,7 @@ class DisplaySettingsController extends Controller
 
     public function update(Request $request)
     {
-        $payload = $request->only(['selectedKisyuIds', 'selectedWorkerIds']);
+        $payload = $request->only(['selectedKisyuIds', 'selectedWorkerIds', 'showLocationInDevice']);
         $json    = json_encode($payload);
 
         DB::table('display_settings')->upsert(

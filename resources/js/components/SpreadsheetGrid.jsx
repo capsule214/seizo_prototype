@@ -104,7 +104,9 @@ function colToDateTime(startDate, col, type, viewMode) {
     }
 }
 
-function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN_ROWS) {
+// locationPlans: 場所予定配列（null なら場所行なし）。渡すと serialId ごとにオーバーラップ回避レイアウトを計算し
+//   各グループへ locationRowIdx / locationNumRows / locationPlans を付与する。
+function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN_ROWS, locationPlans = null) {
     const groupMap = {};
     for (const g of groups) {
         groupMap[g.id] = { ...g, rows: Array.from({ length: minRows }, () => null), plans: [] };
@@ -138,14 +140,58 @@ function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN
         grp.plans.push({ ...plan, rowIdx });
     }
 
+    // 場所予定のオーバーラップ回避レイアウト（serialId = グループID でグルーピング）
+    let locLayoutMap = null;
+    if (locationPlans !== null) {
+        locLayoutMap = {};
+        for (const g of groups) locLayoutMap[g.id] = { rows: [], plans: [] };
+
+        const sortedLoc = [...locationPlans].sort((a, b) => {
+            const as = parseApiDate(a.startDate), bs = parseApiDate(b.startDate);
+            return as - bs;
+        });
+        for (const plan of sortedLoc) {
+            const loc = locLayoutMap[plan.serialId];
+            if (!loc) continue;
+            const startCol = planToStartCol(plan, startDate, viewMode);
+            const endCol   = planToEndCol(plan, startDate, viewMode);
+            let rowIdx = -1;
+            for (let r = 0; r < loc.rows.length; r++) {
+                if (loc.rows[r] === null || loc.rows[r] <= startCol) { rowIdx = r; break; }
+            }
+            if (rowIdx === -1) { rowIdx = loc.rows.length; loc.rows.push(null); }
+            loc.rows[rowIdx] = endCol + 1;
+            loc.plans.push({ ...plan, rowIdx });
+        }
+    }
+
     let startRow = 0;
     const result = [];
     for (const g of groups) {
         const grp = groupMap[g.id];
-        if (!grp) { result.push({ ...g, startRow, numRows: minRows, plans: [] }); startRow += minRows; continue; }
+        const locLayout = locLayoutMap ? locLayoutMap[g.id] : null;
+        const locationNumRows = locLayout ? Math.max(1, locLayout.rows.length || 1) : 0;
+
+        if (!grp) {
+            const nr = minRows + locationNumRows;
+            result.push({
+                ...g, startRow, numRows: nr, plans: [],
+                locationRowIdx: locationNumRows > 0 ? minRows : -1,
+                locationNumRows,
+                locationPlans: locLayout ? locLayout.plans : [],
+            });
+            startRow += nr;
+            continue;
+        }
         const numRows = Math.max(minRows, grp.rows.length);
-        result.push({ ...grp, startRow, numRows });
-        startRow += numRows;
+        const totalNr = numRows + locationNumRows;
+        result.push({
+            ...grp, startRow, numRows: totalNr,
+            locationRowIdx: locationNumRows > 0 ? numRows : -1,
+            locationNumRows,
+            locationPlans: locLayout ? locLayout.plans : [],
+        });
+        startRow += totalNr;
     }
     return { groups: result, totalRows: startRow };
 }
@@ -196,6 +242,8 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const [sonar, setSonar] = useState(null);
 
     const fetchedRangesRef = useRef([]);
+    const [locationOverlayPlans, setLocationOverlayPlans] = useState([]);
+    const fetchedLocRangesRef = useRef([]);
     const containerRef = useRef(null);
     const scrollRef = useRef(null);
     const [scrollTop, setScrollTop] = useState(0);
@@ -213,6 +261,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const leftHdrW = mode === 'device' ? DEV_HDR_W : ASGN_HDR_W;
     const planEndpoint = mode === 'location' ? '/location-plan' : '/plan';
     const planMinRows  = mode === 'location' ? MIN_ROWS_LOCATION : MIN_ROWS;
+    const extraLocationRow = mode === 'device' && !!displaySettings.showLocationInDevice;
 
     const endDate = useMemo(() => addDays(startDate, displayMonths * 30), [startDate, displayMonths]);
 
@@ -260,11 +309,26 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
 
     const { groups: layoutGroups, totalRows } = useMemo(() => {
         const groupKey = mode === 'device' ? 'device' : mode === 'worker' ? 'worker' : 'location';
-        return layoutPlans(plans.filter(p => !p.deleted), groupKey, filteredGroups, viewMode, startDate, planMinRows);
-    }, [plans, filteredGroups, mode, viewMode, startDate, planMinRows]);
+        const locPlans = extraLocationRow ? locationOverlayPlans : null;
+        return layoutPlans(plans.filter(p => !p.deleted), groupKey, filteredGroups, viewMode, startDate, planMinRows, locPlans);
+    }, [plans, filteredGroups, mode, viewMode, startDate, planMinRows, extraLocationRow, locationOverlayPlans]);
 
     // 矩形選択のクロージャ内から常に最新レイアウトを参照できるようにする
     layoutGroupsRef.current = layoutGroups;
+
+    // 場所表示行の絶対行番号セット（renderCells でセルの背景色を変えるために使用）
+    const locationRowAbsSet = useMemo(() => {
+        if (!extraLocationRow) return new Set();
+        const s = new Set();
+        for (const g of layoutGroups) {
+            if (g.locationRowIdx >= 0) {
+                for (let i = 0; i < (g.locationNumRows || 1); i++) {
+                    s.add(g.startRow + g.locationRowIdx + i);
+                }
+            }
+        }
+        return s;
+    }, [layoutGroups, extraLocationRow]);
 
     const totalH = totalRows * CELL_SIZE;
     const colW = CELL_SIZE;
@@ -301,6 +365,35 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     useEffect(() => {
         fetchPlans(startDate, endDate);
     }, [startDate, endDate]);
+
+    const fetchLocationOverlayPlans = useCallback(async (from, to) => {
+        const gaps = computeGaps(fetchedLocRangesRef.current, from, to);
+        for (const gap of gaps) {
+            try {
+                const res = await apiFetch(`/location-plan?from=${gap.from}&to=${gap.to}`);
+                const data = await res.json();
+                setLocationOverlayPlans(prev => {
+                    const existingIds = new Set(prev.map(p => p.planId));
+                    const newPlans = data.filter(p => !existingIds.has(p.planId));
+                    return [...prev, ...newPlans];
+                });
+                fetchedLocRangesRef.current.push(gap);
+            } catch (e) {
+                console.error('fetchLocationOverlayPlans error', e);
+            }
+        }
+    }, []);
+
+    // showLocationInDevice の ON/OFF 切り替え、または表示期間変更時に場所予定をフェッチ
+    useEffect(() => {
+        if (!extraLocationRow) {
+            setLocationOverlayPlans([]);
+            fetchedLocRangesRef.current = [];
+            return;
+        }
+        fetchedLocRangesRef.current = [];
+        fetchLocationOverlayPlans(startDate, endDate);
+    }, [extraLocationRow, startDate, endDate]);
 
     // 保存・キャンセルを親から呼び出せるようにする
     useImperativeHandle(ref, () => ({
@@ -376,8 +469,9 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         const visibleTo = colToDateStr(startDate, Math.ceil((e.currentTarget.scrollLeft + containerW) / colW), viewMode);
         if (visibleFrom >= startDate && visibleTo <= endDate) {
             fetchPlans(visibleFrom, visibleTo);
+            if (extraLocationRow) fetchLocationOverlayPlans(visibleFrom, visibleTo);
         }
-    }, [startDate, endDate, colW, containerW, viewMode]);
+    }, [startDate, endDate, colW, containerW, viewMode, extraLocationRow, fetchLocationOverlayPlans]);
 
     const visRowStart = Math.max(0, Math.floor(scrollTop / CELL_SIZE) - BUFFER_ROWS);
     const visRowEnd   = Math.min(totalRows - 1, Math.ceil((scrollTop + containerH) / CELL_SIZE) + BUFFER_ROWS);
@@ -967,12 +1061,17 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             for (let row = visRowStart; row <= visRowEnd; row++) {
                 const y = row * CELL_SIZE;
                 const isSel = selectedCell && selectedCell.col === col && selectedCell.row === row;
+                const isLocRow = locationRowAbsSet.has(row);
+                // 場所行は列の土日色より薄い青を優先
+                const cellBg = isLocRow
+                    ? (baseBg === '#e5e7eb' ? '#cfe2f3' : '#dbeafe')
+                    : baseBg;
                 cells.push(
                     <div
                         key={`c${col}-${row}`}
                         style={{
                             position: 'absolute', left: x, top: y, width: colW, height: CELL_SIZE,
-                            background: baseBg,
+                            background: cellBg,
                             borderRight: '1px solid #e5e7eb',
                             borderBottom: '1px solid #e5e7eb',
                             outline: isSel ? '2px solid #2563eb' : 'none',
@@ -996,15 +1095,29 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     }
 
     function renderGroupLines() {
-        return layoutGroups.filter(g => {
+        const lines = [];
+        for (const g of layoutGroups) {
             const y = g.startRow * CELL_SIZE;
-            return y >= visRowStart * CELL_SIZE && y <= visRowEnd * CELL_SIZE;
-        }).map(g => (
-            <div key={`gl${g.id}`} style={{
-                position: 'absolute', left: 0, top: g.startRow * CELL_SIZE,
-                width: totalCols * colW, height: 1, background: '#9ca3af', zIndex: 1, pointerEvents: 'none',
-            }} />
-        ));
+            if (y < visRowStart * CELL_SIZE || y > (visRowEnd + 1) * CELL_SIZE) continue;
+            lines.push(
+                <div key={`gl${g.id}`} style={{
+                    position: 'absolute', left: 0, top: y,
+                    width: totalCols * colW, height: 1, background: '#9ca3af', zIndex: 1, pointerEvents: 'none',
+                }} />
+            );
+            if (g.locationRowIdx >= 0) {
+                const locY = (g.startRow + g.locationRowIdx) * CELL_SIZE;
+                if (locY >= visRowStart * CELL_SIZE && locY <= (visRowEnd + 1) * CELL_SIZE) {
+                    lines.push(
+                        <div key={`gl-loc${g.id}`} style={{
+                            position: 'absolute', left: 0, top: locY,
+                            width: totalCols * colW, height: 1, background: '#93c5fd', zIndex: 1, pointerEvents: 'none',
+                        }} />
+                    );
+                }
+            }
+        }
+        return lines;
     }
 
     function renderBars() {
@@ -1116,18 +1229,71 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return [...bars, ...labels];
     }
 
+    function renderLocationOverlayBars() {
+        if (!extraLocationRow) return [];
+        const bars = [];
+
+        for (const g of layoutGroups) {
+            if (g.locationRowIdx < 0 || !g.locationPlans?.length) continue;
+
+            for (const plan of g.locationPlans) {
+                const startCol = planToStartCol(plan, startDate, viewMode);
+                const endCol   = planToEndCol(plan, startDate, viewMode);
+                // locationRowIdx は装置行の直後の先頭。plan.rowIdx が場所行内のサブ行オフセット
+                const absRow   = g.startRow + g.locationRowIdx + plan.rowIdx;
+
+                if (absRow < visRowStart || absRow > visRowEnd) continue;
+
+                const x = startCol * colW;
+                const w = Math.max(colW, (endCol - startCol + 1) * colW);
+                const y = absRow * CELL_SIZE;
+
+                if (x + w < scrollLeft || x > scrollLeft + containerW) continue;
+
+                bars.push(
+                    <div
+                        key={`loc-ov-${plan.planId}`}
+                        title={plan.locationName}
+                        style={{
+                            position: 'absolute', left: x, top: y, width: w, height: CELL_SIZE,
+                            background: '#93c5fd',
+                            border: '1px solid #3b82f6',
+                            boxSizing: 'border-box', zIndex: 2,
+                            overflow: 'hidden', pointerEvents: 'none',
+                            display: 'flex', alignItems: 'center',
+                        }}
+                    >
+                        <div style={{
+                            fontSize: 9, color: '#1e3a5f', paddingLeft: 3,
+                            whiteSpace: 'nowrap', overflow: 'hidden',
+                            userSelect: 'none',
+                        }}>
+                            {plan.locationName}
+                        </div>
+                    </div>
+                );
+            }
+        }
+        return bars;
+    }
+
     function renderLeftHeader() {
-        return layoutGroups.filter(g => {
-            const y = g.startRow * CELL_SIZE;
-            return y + g.numRows * CELL_SIZE > scrollTop && y < scrollTop + containerH;
-        }).map(g => {
-            const y = g.startRow * CELL_SIZE - scrollTop;
-            const h = g.numRows * CELL_SIZE;
-            return (
+        const items = [];
+        for (const g of layoutGroups) {
+            const gTop = g.startRow * CELL_SIZE;
+            if (gTop + g.numRows * CELL_SIZE <= scrollTop || gTop >= scrollTop + containerH) continue;
+
+            const hasLocRow = g.locationRowIdx >= 0;
+            const mainH = hasLocRow ? g.locationRowIdx * CELL_SIZE : g.numRows * CELL_SIZE;
+            const mainY = gTop - scrollTop;
+
+            items.push(
                 <div key={g.id} style={{
-                    position: 'absolute', left: 0, top: y, width: leftHdrW, height: h,
-                    borderBottom: '1px solid #9ca3af', borderRight: '1px solid #d1d5db',
-                    background: '#f9fafb', boxSizing: 'border-box', display: 'flex', flexDirection: 'column', justifyContent: 'center',
+                    position: 'absolute', left: 0, top: mainY, width: leftHdrW, height: mainH,
+                    borderBottom: hasLocRow ? '1px solid #93c5fd' : '1px solid #9ca3af',
+                    borderRight: '1px solid #d1d5db',
+                    background: '#f9fafb', boxSizing: 'border-box',
+                    display: 'flex', flexDirection: 'column', justifyContent: 'center',
                     padding: '0 4px', overflow: 'hidden',
                 }}>
                     {mode === 'device' ? (
@@ -1140,7 +1306,24 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                     )}
                 </div>
             );
-        });
+
+            if (hasLocRow) {
+                const locY = (gTop + g.locationRowIdx * CELL_SIZE) - scrollTop;
+                const locH = (g.locationNumRows || 1) * CELL_SIZE;
+                items.push(
+                    <div key={`${g.id}-loc`} style={{
+                        position: 'absolute', left: 0, top: locY, width: leftHdrW, height: locH,
+                        borderBottom: '1px solid #9ca3af', borderRight: '1px solid #d1d5db',
+                        background: '#dbeafe', boxSizing: 'border-box',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: 9, color: '#1d4ed8', fontWeight: 700, letterSpacing: '0.05em',
+                    }}>
+                        場所
+                    </div>
+                );
+            }
+        }
+        return items;
     }
 
     const planCount = plans.filter(p => !p.deleted).length;
@@ -1224,6 +1407,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                             {renderCells()}
                             {renderGroupLines()}
                             {renderBars()}
+                            {renderLocationOverlayBars()}
                             {/* 矩形選択オーバーレイ */}
                             {rectSelect && (
                                 <div

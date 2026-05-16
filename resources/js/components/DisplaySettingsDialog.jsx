@@ -9,6 +9,9 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
     const [selectedWorkerIds, setSelectedWorkerIds] = useState(
         settings.selectedWorkerIds?.length ? settings.selectedWorkerIds.map(String) : []
     );
+    const [showLocationInDevice, setShowLocationInDevice] = useState(
+        !!settings.showLocationInDevice
+    );
     const [kisyuFilter, setKisyuFilter] = useState('');
     const [workerFilter, setWorkerFilter] = useState('');
     const [listHeight, setListHeight] = useState(300);
@@ -47,7 +50,7 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
     }
 
     function handleSave() {
-        onSave({ selectedKisyuIds, selectedWorkerIds });
+        onSave({ selectedKisyuIds, selectedWorkerIds, showLocationInDevice });
     }
 
     return (
@@ -74,6 +77,15 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
 
                 {tab === 'kisyu' && (
                     <>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, cursor: 'pointer', userSelect: 'none' }}>
+                            <input
+                                type="checkbox"
+                                checked={showLocationInDevice}
+                                onChange={e => setShowLocationInDevice(e.target.checked)}
+                            />
+                            <span style={{ fontSize: 13, fontWeight: 600, color: '#1d4ed8' }}>場所予定も表示</span>
+                            <span style={{ fontSize: 11, color: '#6b7280' }}>（装置タブの各装置下端に場所予定行を追加）</span>
+                        </label>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
                             <input
                                 placeholder="機種名で絞り込み"

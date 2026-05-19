@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import SpreadsheetGrid from './SpreadsheetGrid';
 import DisplaySettingsDialog from './DisplaySettingsDialog';
 import { apiFetch } from '../lib/api';
+import GridTopBar from './GridTopBar';
+import GridTabPane from './GridTabPane';
+import AlertToast from './AlertToast';
 
 export default function SpreadsheetGridClient({ user, onLogout }) {
     const [tab, setTab] = useState('device');
@@ -152,54 +155,20 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            {/* タブバー */}
-            <div style={{ display: 'flex', alignItems: 'center', background: '#fff', borderBottom: '2px solid #e5e7eb', padding: '0 12px', flexShrink: 0 }}>
-                {[['device', '装置'], ['worker', '担当者'], ['location', '場所']].map(([key, label]) => (
-                    <button
-                        key={key}
-                        onClick={() => setTab(key)}
-                        style={{
-                            padding: '8px 20px', border: 'none', background: 'none', cursor: 'pointer',
-                            fontWeight: tab === key ? 700 : 400, fontSize: 14,
-                            borderBottom: tab === key ? '2px solid #2563eb' : '2px solid transparent',
-                            marginBottom: -2, color: tab === key ? '#2563eb' : '#374151',
-                        }}
-                    >{label}</button>
-                ))}
-                <div style={{ flex: 1 }} />
-                {isDirty && (
-                    <>
-                        <button
-                            onClick={handleSave}
-                            style={{ padding: '6px 14px', border: 'none', borderRadius: 6, background: '#2563eb', color: '#fff', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
-                        >保存</button>
-                        <button
-                            onClick={handleCancel}
-                            style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13, marginLeft: 6 }}
-                        >キャンセル</button>
-                        <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 8px' }} />
-                    </>
-                )}
-                <button
-                    onClick={() => setShowSettings(true)}
-                    style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13 }}
-                >表示設定</button>
-                <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 4px' }} />
-                <span style={{ fontSize: 12, color: '#6b7280' }}>{user?.name}</span>
-                <button
-                    onClick={handleLogout}
-                    style={{ padding: '6px 14px', border: '1px solid #d1d5db', borderRadius: 6, background: '#fff', cursor: 'pointer', fontSize: 13 }}
-                >ログアウト</button>
-            </div>
+            <GridTopBar
+                tab={tab}
+                setTab={setTab}
+                isDirty={isDirty}
+                onSave={handleSave}
+                onCancel={handleCancel}
+                onOpenSettings={() => setShowSettings(true)}
+                userName={user?.name}
+                onLogout={handleLogout}
+            />
 
             {/* グリッド — 両タブ常時マウント。visibility で表示/非表示を切り替え */}
             <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                {/* 装置タブ */}
-                <div style={{
-                    position: 'absolute', inset: 0,
-                    visibility: tab === 'device' ? 'visible' : 'hidden',
-                    pointerEvents: tab === 'device' ? 'auto' : 'none',
-                }}>
+                <GridTabPane active={tab === 'device'}>
                     <SpreadsheetGrid
                         {...gridProps}
                         ref={deviceGridRef}
@@ -208,14 +177,9 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                         onRangeChange={r => { deviceRangeRef.current = r; }}
                         onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
-                </div>
+                </GridTabPane>
 
-                {/* 担当者タブ */}
-                <div style={{
-                    position: 'absolute', inset: 0,
-                    visibility: tab === 'worker' ? 'visible' : 'hidden',
-                    pointerEvents: tab === 'worker' ? 'auto' : 'none',
-                }}>
+                <GridTabPane active={tab === 'worker'}>
                     <SpreadsheetGrid
                         {...gridProps}
                         ref={workerGridRef}
@@ -224,14 +188,9 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                         onRangeChange={r => { workerRangeRef.current = r; }}
                         onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
-                </div>
+                </GridTabPane>
 
-                {/* 場所タブ */}
-                <div style={{
-                    position: 'absolute', inset: 0,
-                    visibility: tab === 'location' ? 'visible' : 'hidden',
-                    pointerEvents: tab === 'location' ? 'auto' : 'none',
-                }}>
+                <GridTabPane active={tab === 'location'}>
                     <SpreadsheetGrid
                         {...gridProps}
                         ref={locationGridRef}
@@ -240,25 +199,9 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                         onRangeChange={r => { locationRangeRef.current = r; }}
                         onDirtyChange={dirty => setIsDirty(prev => dirty || prev)}
                     />
-                </div>
+                </GridTabPane>
 
-                {/* エラーアラート */}
-                {alertMessage && (
-                    <div style={{
-                        position: 'absolute', top: 12, right: 12, zIndex: 9999,
-                        background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 8,
-                        padding: '10px 16px', fontSize: 13, color: '#b91c1c',
-                        boxShadow: '0 4px 12px rgba(0,0,0,0.12)',
-                        display: 'flex', alignItems: 'center', gap: 10, maxWidth: 360,
-                    }}>
-                        <span style={{ fontSize: 16 }}>⚠</span>
-                        <span style={{ flex: 1 }}>{alertMessage}</span>
-                        <button
-                            onClick={() => setAlertMessage(null)}
-                            style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 16, color: '#9ca3af', padding: 0 }}
-                        >×</button>
-                    </div>
-                )}
+                <AlertToast message={alertMessage} onClose={() => setAlertMessage(null)} />
             </div>
 
             {showSettings && (

@@ -5,6 +5,8 @@ import { apiFetch } from '../lib/api';
 import ContextMenu from './ContextMenu';
 import BarTooltip from './BarTooltip';
 import ScheduleDialog from './ScheduleDialog';
+import SpreadsheetGridToolbar from './SpreadsheetGridToolbar';
+import SpreadsheetGridStatusBar from './SpreadsheetGridStatusBar';
 
 const CELL_SIZE = 20;
 const HDR_H = 20;
@@ -958,6 +960,12 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         await fetchPlans(startDate, endDate);
     }
 
+    const handleShiftMonth = useCallback((months) => {
+        const d = new Date(startDate + 'T00:00:00');
+        d.setMonth(d.getMonth() + months);
+        setStartDate(dateToStr(d));
+    }, [startDate]);
+
     const dateColumns = useMemo(() => {
         const cols = [];
         const days = daysBetween(startDate, endDate);
@@ -1354,40 +1362,19 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-            {/* ツールバー */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0, flexWrap: 'wrap' }}>
-                <input
-                    type="date"
-                    value={startDate}
-                    onChange={e => setStartDate(e.target.value)}
-                    style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}
-                />
-                {[['◀◀', -2], ['◀', -1], ['▶', 1], ['▶▶', 2]].map(([label, months]) => (
-                    <button key={label} onClick={() => {
-                        const d = new Date(startDate + 'T00:00:00');
-                        d.setMonth(d.getMonth() + months);
-                        setStartDate(dateToStr(d));
-                    }} style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12 }}>{label}</button>
-                ))}
-                <select value={displayMonths} onChange={e => setDisplayMonths(Number(e.target.value))} style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}>
-                    {Array.from({ length: 24 }, (_, i) => i + 1).map(n => (
-                        <option key={n} value={n}>{n}ヶ月</option>
-                    ))}
-                </select>
-                {mode !== 'location' && (
-                    <>
-                        <select value={deviceCount} onChange={e => setDeviceCount(Number(e.target.value))} style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4 }}>
-                            {[100, 200, 500, 1000, 2000, 5000].map(n => (
-                                <option key={n} value={n}>{n}件</option>
-                            ))}
-                        </select>
-                        <button onClick={handleSeedApply} style={{ padding: '3px 10px', border: '1px solid #d1d5db', borderRadius: 4, background: '#2563eb', color: '#fff', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>適用</button>
-                    </>
-                )}
-                <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 2px' }} />
-                <button onClick={() => setViewMode('day')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'day' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'day' ? '#eff6ff' : '#fff', color: viewMode === 'day' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>日単位</button>
-                <button onClick={() => setViewMode('slot')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'slot' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'slot' ? '#eff6ff' : '#fff', color: viewMode === 'slot' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>時間割</button>
-            </div>
+            <SpreadsheetGridToolbar
+                startDate={startDate}
+                onStartDateChange={setStartDate}
+                onShiftMonth={handleShiftMonth}
+                displayMonths={displayMonths}
+                onDisplayMonthsChange={setDisplayMonths}
+                deviceCount={deviceCount}
+                onDeviceCountChange={setDeviceCount}
+                onSeedApply={handleSeedApply}
+                mode={mode}
+                viewMode={viewMode}
+                onViewModeChange={setViewMode}
+            />
 
             {/* グリッド本体 */}
             <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
@@ -1466,13 +1453,15 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 ))}
             </div>
 
-            {/* ステータスバー */}
-            <div style={{ padding: '3px 10px', background: '#f9fafb', borderTop: '1px solid #e5e7eb', fontSize: 11, color: '#6b7280', display: 'flex', gap: 12, flexShrink: 0 }}>
-                <span>{groupCount} {mode === 'device' ? '装置' : mode === 'location' ? '場所' : '担当者'} / {totalRows} 行 × {daysBetween(startDate, endDate)} 日</span>
-                <span>予定 {planCount} 件</span>
-                {selected.size > 0 && <span style={{ color: '#2563eb' }}>{selected.size}件選択中</span>}
-                {copied.length > 0 && <span style={{ color: '#059669' }}>{copied.length}件コピー済み</span>}
-            </div>
+            <SpreadsheetGridStatusBar
+                groupCount={groupCount}
+                mode={mode}
+                totalRows={totalRows}
+                dayCount={daysBetween(startDate, endDate)}
+                planCount={planCount}
+                selectedCount={selected.size}
+                copiedCount={copied.length}
+            />
 
             {contextMenu && <ContextMenu x={contextMenu.x} y={contextMenu.y} items={contextMenu.items} onClose={() => setContextMenu(null)} />}
             {tooltip && <BarTooltip plan={tooltip.plan} anchorX={tooltip.x} anchorY={tooltip.y} onClose={() => setTooltip(null)} />}

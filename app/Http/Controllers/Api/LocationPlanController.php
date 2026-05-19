@@ -8,6 +8,26 @@ use Illuminate\Http\Request;
 
 class LocationPlanController extends Controller
 {
+    private function planRules(): array
+    {
+        return [
+            'locationId' => 'required|integer|min:1',
+            'serialId'   => 'required|integer|min:1',
+            'startDate'  => 'required|date',
+            'endDate'    => 'required|date|after_or_equal:startDate',
+        ];
+    }
+
+    private function planPayload(array $data): array
+    {
+        return [
+            'location_id' => $data['locationId'],
+            'serial_id'   => $data['serialId'],
+            'start_date'  => $data['startDate'],
+            'end_date'    => $data['endDate'],
+        ];
+    }
+
     private function formatPlan(KdLocationPlan $plan): array
     {
         $location = $plan->km_location;
@@ -44,18 +64,10 @@ class LocationPlanController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'locationId' => 'required|integer|min:1',
-            'serialId'   => 'required|integer|min:1',
-            'startDate'  => 'required|date',
-            'endDate'    => 'required|date|after_or_equal:startDate',
-        ]);
+        $data = $request->validate($this->planRules());
 
         $plan = KdLocationPlan::create([
-            'location_id' => $data['locationId'],
-            'serial_id'   => $data['serialId'],
-            'start_date'  => $data['startDate'],
-            'end_date'    => $data['endDate'],
+            ...$this->planPayload($data),
             'deleted'     => 0,
         ]);
 
@@ -68,19 +80,9 @@ class LocationPlanController extends Controller
     {
         $plan = KdLocationPlan::findOrFail($id);
 
-        $data = $request->validate([
-            'locationId' => 'required|integer|min:1',
-            'serialId'   => 'required|integer|min:1',
-            'startDate'  => 'required|date',
-            'endDate'    => 'required|date|after_or_equal:startDate',
-        ]);
+        $data = $request->validate($this->planRules());
 
-        $plan->update([
-            'location_id' => $data['locationId'],
-            'serial_id'   => $data['serialId'],
-            'start_date'  => $data['startDate'],
-            'end_date'    => $data['endDate'],
-        ]);
+        $plan->update($this->planPayload($data));
 
         $plan->load(['km_location', 'kd_serial.dm_kisyu']);
 

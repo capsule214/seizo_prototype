@@ -8,6 +8,28 @@ use Illuminate\Http\Request;
 
 class PlanController extends Controller
 {
+    private function planRules(): array
+    {
+        return [
+            'serialId'  => 'required|integer|min:1',
+            'taskId'    => 'required|integer|min:1',
+            'workerId'  => 'required|integer|min:1',
+            'startDate' => 'required|date',
+            'endDate'   => 'required|date|after_or_equal:startDate',
+        ];
+    }
+
+    private function planPayload(array $data): array
+    {
+        return [
+            'serial_id'   => $data['serialId'],
+            'task_id'     => $data['taskId'],
+            'assignee_id' => $data['workerId'],
+            'start_date'  => $data['startDate'],
+            'end_date'    => $data['endDate'],
+        ];
+    }
+
     private function formatPlan(KdPlan $plan): array
     {
         $serial = $plan->kd_serial;
@@ -50,20 +72,10 @@ class PlanController extends Controller
 
     public function store(Request $request)
     {
-        $data = $request->validate([
-            'serialId'  => 'required|integer|min:1',
-            'taskId'    => 'required|integer|min:1',
-            'workerId'  => 'required|integer|min:1',
-            'startDate' => 'required|date',
-            'endDate'   => 'required|date|after_or_equal:startDate',
-        ]);
+        $data = $request->validate($this->planRules());
 
         $plan = KdPlan::create([
-            'serial_id'   => $data['serialId'],
-            'task_id'     => $data['taskId'],
-            'assignee_id' => $data['workerId'],
-            'start_date'  => $data['startDate'],
-            'end_date'    => $data['endDate'],
+            ...$this->planPayload($data),
             'deleted'     => 0,
         ]);
 
@@ -76,21 +88,9 @@ class PlanController extends Controller
     {
         $plan = KdPlan::findOrFail($id);
 
-        $data = $request->validate([
-            'serialId'  => 'required|integer|min:1',
-            'taskId'    => 'required|integer|min:1',
-            'workerId'  => 'required|integer|min:1',
-            'startDate' => 'required|date',
-            'endDate'   => 'required|date|after_or_equal:startDate',
-        ]);
+        $data = $request->validate($this->planRules());
 
-        $plan->update([
-            'serial_id'   => $data['serialId'],
-            'task_id'     => $data['taskId'],
-            'assignee_id' => $data['workerId'],
-            'start_date'  => $data['startDate'],
-            'end_date'    => $data['endDate'],
-        ]);
+        $plan->update($this->planPayload($data));
 
         $plan->load(['kd_serial.dm_kisyu', 'km_task', 'km_worker']);
 

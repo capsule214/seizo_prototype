@@ -16,6 +16,9 @@ use Illuminate\Support\Facades\DB;
 
 class SeedController extends Controller
 {
+    private const SLOT_HOURS = [8, 10, 13, 15, 17, 19];
+    private const SLOT_END_HOURS = [10, 12, 15, 17, 19, 21];
+
     private int $lcgSeed = 42;
 
     private function lcgNext(): int
@@ -28,6 +31,26 @@ class SeedController extends Controller
     private function lcgRange(int $min, int $max): int
     {
         return $min + ($this->lcgNext() % ($max - $min + 1));
+    }
+
+    private function buildDateRangeFromSlots(int $baseTimestamp, int $startSlot, int $duration): array
+    {
+        $startDay = intdiv($startSlot, 6);
+        $startSlotOfDay = $startSlot % 6;
+        $endSlot = $startSlot + $duration - 1;
+        $endDay = intdiv($endSlot, 6);
+        $endSlotOfDay = $endSlot % 6;
+
+        $startTs = $baseTimestamp + $startDay * 86400;
+        $endTs = $baseTimestamp + $endDay * 86400;
+
+        $startHour = self::SLOT_HOURS[$startSlotOfDay];
+        $endHour = self::SLOT_END_HOURS[$endSlotOfDay];
+
+        $startDate = date('Y-m-d', $startTs) . 'T' . str_pad((string) $startHour, 2, '0', STR_PAD_LEFT) . ':00:00';
+        $endDate = date('Y-m-d', $endTs) . 'T' . str_pad((string) $endHour, 2, '0', STR_PAD_LEFT) . ':00:00';
+
+        return [$startDate, $endDate];
     }
 
     public function seed(Request $request)
@@ -120,24 +143,7 @@ class SeedController extends Controller
             $workerIdx  = $this->lcgRange(0, count($workerIds) - 1);
             $startSlot  = $this->lcgRange(0, $totalSlots - 1);
             $duration   = $this->lcgRange(1, 12);
-
-            $slotHours = [8, 10, 13, 15, 17, 19];
-            $slotEndHours = [10, 12, 15, 17, 19, 21];
-
-            $startDay  = intdiv($startSlot, 6);
-            $startSlotOfDay = $startSlot % 6;
-            $endSlot   = $startSlot + $duration - 1;
-            $endDay    = intdiv($endSlot, 6);
-            $endSlotOfDay = $endSlot % 6;
-
-            $startTs = $base + $startDay * 86400;
-            $endTs   = $base + $endDay * 86400;
-
-            $startH = $slotHours[$startSlotOfDay];
-            $endH   = $slotEndHours[$endSlotOfDay];
-
-            $startDate = date('Y-m-d', $startTs) . 'T' . str_pad($startH, 2, '0', STR_PAD_LEFT) . ':00:00';
-            $endDate   = date('Y-m-d', $endTs)   . 'T' . str_pad($endH, 2, '0', STR_PAD_LEFT)   . ':00:00';
+            [$startDate, $endDate] = $this->buildDateRangeFromSlots($base, $startSlot, $duration);
 
             $plans[] = [
                 'serial_id'   => $serialIds[$serialIdx],
@@ -161,30 +167,13 @@ class SeedController extends Controller
             $serialIdx   = $this->lcgRange(0, count($serialIds) - 1);
             $startSlot   = $this->lcgRange(0, $totalSlots - 1);
             $duration    = $this->lcgRange(1, 8);
-
-            $slotHours    = [8, 10, 13, 15, 17, 19];
-            $slotEndHours = [10, 12, 15, 17, 19, 21];
-
-            $startDay       = intdiv($startSlot, 6);
-            $startSlotOfDay = $startSlot % 6;
-            $endSlot        = $startSlot + $duration - 1;
-            $endDay         = intdiv($endSlot, 6);
-            $endSlotOfDay   = $endSlot % 6;
-
-            $startTs = $base + $startDay * 86400;
-            $endTs   = $base + $endDay * 86400;
-
-            $startH = $slotHours[$startSlotOfDay];
-            $endH   = $slotEndHours[$endSlotOfDay];
-
-            $startDate2 = date('Y-m-d', $startTs) . 'T' . str_pad($startH, 2, '0', STR_PAD_LEFT) . ':00:00';
-            $endDate2   = date('Y-m-d', $endTs)   . 'T' . str_pad($endH, 2, '0', STR_PAD_LEFT)   . ':00:00';
+            [$startDate, $endDate] = $this->buildDateRangeFromSlots($base, $startSlot, $duration);
 
             $locationPlans[] = [
                 'location_id' => $locationIds[$locationIdx],
                 'serial_id'   => $serialIds[$serialIdx],
-                'start_date'  => $startDate2,
-                'end_date'    => $endDate2,
+                'start_date'  => $startDate,
+                'end_date'    => $endDate,
                 'deleted'     => 0,
             ];
         }

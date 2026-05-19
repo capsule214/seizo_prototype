@@ -1,216 +1,39 @@
 import { useState, useRef, useEffect, useCallback, useMemo, forwardRef, useImperativeHandle } from 'react';
 import { getDateType } from '../lib/holidays';
-import { getColor } from '../lib/colors';
 import { apiFetch } from '../lib/api';
 import ContextMenu from './ContextMenu';
 import BarTooltip from './BarTooltip';
 import ScheduleDialog from './ScheduleDialog';
 import SpreadsheetGridToolbar from './SpreadsheetGridToolbar';
 import SpreadsheetGridStatusBar from './SpreadsheetGridStatusBar';
-
-const CELL_SIZE = 20;
-const HDR_H = 20;
-const TOTAL_HDR_H = HDR_H * 4;
-const MIN_ROWS = 3;
-const MIN_ROWS_LOCATION = 1;
-const BUFFER_ROWS = 12;
-const DEV_HDR_W = 202;
-const ASGN_HDR_W = 80;
-const SLOT_COUNT = 6;
-const HANDLE_W = 5;
-
-const SLOT_HOURS = [8, 10, 13, 15, 17, 19];
-const SLOT_END_HOURS = [10, 12, 15, 17, 19, 21];
-const SLOT_LABELS = ['AM1', 'AM2', 'PM1', 'PM2', '残業1', '残業2'];
-
-const TODAY_STR = new Date().toISOString().slice(0, 10);
-
-function parseApiDate(s) {
-    if (!s) return null;
-    return s.includes('T') ? new Date(s) : new Date(s + 'T00:00:00');
-}
-
-function dateToStr(d) {
-    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-}
-
-function addDays(dateStr, n) {
-    const d = new Date(dateStr + 'T00:00:00');
-    d.setDate(d.getDate() + n);
-    return dateToStr(d);
-}
-
-function daysBetween(a, b) {
-    const da = new Date(a + 'T00:00:00');
-    const db = new Date(b + 'T00:00:00');
-    return Math.round((db - da) / 86400000);
-}
-
-function getWeekNumber(dateStr) {
-    const d = new Date(dateStr + 'T00:00:00');
-    const jan1 = new Date(d.getFullYear(), 0, 1);
-    const diff = Math.floor((d - jan1) / 86400000);
-    return Math.ceil((diff + jan1.getDay() + 1) / 7);
-}
-
-function colToDateStr(startDate, col, viewMode) {
-    if (viewMode === 'day') {
-        return addDays(startDate, col);
-    } else {
-        return addDays(startDate, Math.floor(col / SLOT_COUNT));
-    }
-}
-
-function dateToCol(startDate, dateStr, viewMode, hour = 8) {
-    const days = daysBetween(startDate, dateStr.slice(0, 10));
-    if (viewMode === 'day') return days;
-    const slotIdx = SLOT_HOURS.findIndex(h => h === hour);
-    return days * SLOT_COUNT + Math.max(0, slotIdx);
-}
-
-function planToStartCol(plan, startDate, viewMode) {
-    const d = parseApiDate(plan.startDate);
-    if (!d) return 0;
-    const dateStr = dateToStr(d);
-    const h = d.getHours();
-    return dateToCol(startDate, dateStr, viewMode, h);
-}
-
-function planToEndCol(plan, startDate, viewMode) {
-    const d = parseApiDate(plan.endDate);
-    if (!d) return 0;
-    const dateStr = dateToStr(d);
-    const h = d.getHours();
-    if (viewMode === 'day') {
-        return dateToCol(startDate, dateStr, viewMode, h);
-    } else {
-        const endSlot = SLOT_END_HOURS.findIndex(eh => eh === h);
-        const days = daysBetween(startDate, dateStr);
-        return days * SLOT_COUNT + Math.max(0, endSlot);
-    }
-}
-
-function colToDateTime(startDate, col, type, viewMode) {
-    if (viewMode === 'day') {
-        const dateStr = addDays(startDate, col);
-        return dateStr + 'T08:00:00';
-    } else {
-        const dayIdx = Math.floor(col / SLOT_COUNT);
-        const slotIdx = col % SLOT_COUNT;
-        const dateStr = addDays(startDate, dayIdx);
-        if (type === 'start') {
-            return `${dateStr}T${String(SLOT_HOURS[slotIdx]).padStart(2,'0')}:00:00`;
-        } else {
-            return `${dateStr}T${String(SLOT_END_HOURS[slotIdx]).padStart(2,'0')}:00:00`;
-        }
-    }
-}
-
-// locationPlans: 場所予定配列（null なら場所行なし）。渡すと serialId ごとにオーバーラップ回避レイアウトを計算し
-//   各グループへ locationRowIdx / locationNumRows / locationPlans を付与する。
-function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN_ROWS, locationPlans = null) {
-    const groupMap = {};
-    for (const g of groups) {
-        groupMap[g.id] = { ...g, rows: Array.from({ length: minRows }, () => null), plans: [] };
-    }
-
-    const sorted = [...plans].sort((a, b) => {
-        const as = parseApiDate(a.startDate), bs = parseApiDate(b.startDate);
-        return as - bs;
-    });
-
-    for (const plan of sorted) {
-        const gid = groupKey === 'device' ? plan.serialId : groupKey === 'worker' ? plan.workerId : plan.locationId;
-        const grp = groupMap[gid];
-        if (!grp) continue;
-
-        const startCol = planToStartCol(plan, startDate, viewMode);
-        const endCol = planToEndCol(plan, startDate, viewMode);
-
-        let rowIdx = -1;
-        for (let r = 0; r < grp.rows.length; r++) {
-            if (grp.rows[r] === null || grp.rows[r] <= startCol) {
-                rowIdx = r;
-                break;
-            }
-        }
-        if (rowIdx === -1) {
-            rowIdx = grp.rows.length;
-            grp.rows.push(null);
-        }
-        grp.rows[rowIdx] = endCol + 1;
-        grp.plans.push({ ...plan, rowIdx });
-    }
-
-    // 場所予定のオーバーラップ回避レイアウト（serialId = グループID でグルーピング）
-    let locLayoutMap = null;
-    if (locationPlans !== null) {
-        locLayoutMap = {};
-        for (const g of groups) locLayoutMap[g.id] = { rows: [], plans: [] };
-
-        const sortedLoc = [...locationPlans].sort((a, b) => {
-            const as = parseApiDate(a.startDate), bs = parseApiDate(b.startDate);
-            return as - bs;
-        });
-        for (const plan of sortedLoc) {
-            const loc = locLayoutMap[plan.serialId];
-            if (!loc) continue;
-            const startCol = planToStartCol(plan, startDate, viewMode);
-            const endCol   = planToEndCol(plan, startDate, viewMode);
-            let rowIdx = -1;
-            for (let r = 0; r < loc.rows.length; r++) {
-                if (loc.rows[r] === null || loc.rows[r] <= startCol) { rowIdx = r; break; }
-            }
-            if (rowIdx === -1) { rowIdx = loc.rows.length; loc.rows.push(null); }
-            loc.rows[rowIdx] = endCol + 1;
-            loc.plans.push({ ...plan, rowIdx });
-        }
-    }
-
-    let startRow = 0;
-    const result = [];
-    for (const g of groups) {
-        const grp = groupMap[g.id];
-        const locLayout = locLayoutMap ? locLayoutMap[g.id] : null;
-        const locationNumRows = locLayout ? Math.max(1, locLayout.rows.length || 1) : 0;
-
-        if (!grp) {
-            const nr = minRows + locationNumRows;
-            result.push({
-                ...g, startRow, numRows: nr, plans: [],
-                locationRowIdx: locationNumRows > 0 ? minRows : -1,
-                locationNumRows,
-                locationPlans: locLayout ? locLayout.plans : [],
-            });
-            startRow += nr;
-            continue;
-        }
-        const numRows = Math.max(minRows, grp.rows.length);
-        const totalNr = numRows + locationNumRows;
-        result.push({
-            ...grp, startRow, numRows: totalNr,
-            locationRowIdx: locationNumRows > 0 ? numRows : -1,
-            locationNumRows,
-            locationPlans: locLayout ? locLayout.plans : [],
-        });
-        startRow += totalNr;
-    }
-    return { groups: result, totalRows: startRow };
-}
-
-function computeGaps(fetchedRanges, from, to) {
-    let gaps = [{ from, to }];
-    for (const r of fetchedRanges) {
-        gaps = gaps.flatMap(g => {
-            if (r.to < g.from || r.from > g.to) return [g];
-            const result = [];
-            if (g.from < r.from) result.push({ from: g.from, to: addDays(r.from, -1) });
-            if (g.to > r.to) result.push({ from: addDays(r.to, 1), to: g.to });
-            return result;
-        });
-    }
-    return gaps;
-}
+import SpreadsheetGridHeaders from './SpreadsheetGridHeaders';
+import SpreadsheetGridCells from './SpreadsheetGridCells';
+import SpreadsheetGridBars from './SpreadsheetGridBars';
+import SpreadsheetGridLeftHeader from './SpreadsheetGridLeftHeader';
+import {
+    CELL_SIZE,
+    HDR_H,
+    TOTAL_HDR_H,
+    MIN_ROWS,
+    MIN_ROWS_LOCATION,
+    BUFFER_ROWS,
+    DEV_HDR_W,
+    ASGN_HDR_W,
+    SLOT_COUNT,
+    HANDLE_W,
+    SLOT_LABELS,
+    TODAY_STR,
+    dateToStr,
+    addDays,
+    daysBetween,
+    getWeekNumber,
+    colToDateStr,
+    planToStartCol,
+    planToEndCol,
+    colToDateTime,
+    layoutPlans,
+    computeGaps,
+} from '../lib/spreadsheet';
 
 const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     mode, serials, workers, tasks, locations, displaySettings,
@@ -984,117 +807,6 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return (dc.type === 'holiday' || dc.type === 'sunday' || dc.type === 'saturday') ? '#e5e7eb' : '#f9fafb';
     }
 
-    function renderHeaders() {
-        const rows = [];
-        const dayW = viewMode === 'day' ? colW : colW * SLOT_COUNT;
-
-        let yearSpans = [];
-        let monthSpans = [];
-        let weekSpans = [];
-
-        let curYear = null, curMonth = null, curWeek = null;
-        let yearStart = 0, monthStart = 0, weekStart = 0;
-
-        for (let d = 0; d < dateColumns.length; d++) {
-            const dc = dateColumns[d];
-            const x = d * dayW;
-            if (dc.year !== curYear) {
-                if (curYear !== null) yearSpans.push({ year: curYear, x: yearStart * dayW, w: (d - yearStart) * dayW });
-                curYear = dc.year; yearStart = d;
-            }
-            if (dc.month !== curMonth || dc.year !== (dateColumns[d-1]?.year)) {
-                if (curMonth !== null) monthSpans.push({ month: curMonth, x: monthStart * dayW, w: (d - monthStart) * dayW });
-                curMonth = dc.month; monthStart = d;
-            }
-            if (dc.week !== curWeek) {
-                if (curWeek !== null) weekSpans.push({ week: curWeek, x: weekStart * dayW, w: (d - weekStart) * dayW });
-                curWeek = dc.week; weekStart = d;
-            }
-        }
-        if (curYear !== null) yearSpans.push({ year: curYear, x: yearStart * dayW, w: (dateColumns.length - yearStart) * dayW });
-        if (curMonth !== null) monthSpans.push({ month: curMonth, x: monthStart * dayW, w: (dateColumns.length - monthStart) * dayW });
-        if (curWeek !== null) weekSpans.push({ week: curWeek, x: weekStart * dayW, w: (dateColumns.length - weekStart) * dayW });
-
-        const commonStyle = { position: 'absolute', height: HDR_H, borderRight: '1px solid #d1d5db', borderBottom: '1px solid #d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, overflow: 'hidden', background: '#f3f4f6', boxSizing: 'border-box' };
-
-        return [
-            yearSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-                <div key={`y${s.year}`} style={{ ...commonStyle, left: s.x, width: s.w, top: 0 }}>{s.year}年</div>
-            )),
-            monthSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-                <div key={`m${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: HDR_H }}>{s.month}月</div>
-            )),
-            weekSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-                <div key={`w${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: HDR_H * 2 }}>第{s.week}週</div>
-            )),
-            dateColumns.filter((_, i) => {
-                const x = i * dayW;
-                return x + dayW > scrollLeft && x < scrollLeft + containerW;
-            }).map((dc, i) => {
-                const dayIdx = dateColumns.indexOf(dc);
-                const x = dayIdx * dayW;
-                const isToday = dc.dateStr === TODAY_STR;
-                let color = '#374151', bg = '#f3f4f6';
-                if (dc.type === 'sunday' || dc.type === 'holiday') color = '#ef4444';
-                if (dc.type === 'saturday') color = '#3b82f6';
-                if (isToday) { bg = '#ef4444'; color = '#fff'; }
-                if (viewMode === 'day') {
-                    return (
-                        <div key={dc.dateStr} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H * 3, background: bg, color }}>
-                            {dc.day}
-                        </div>
-                    );
-                } else {
-                    return SLOT_LABELS.map((label, si) => (
-                        <div key={`${dc.dateStr}-${si}`} style={{ ...commonStyle, left: x + si * colW, width: colW, top: HDR_H * 3, background: si === 0 ? bg : '#f3f4f6', color: si === 0 ? color : '#374151', fontSize: 9 }}>
-                            {si === 0 ? dc.day : label}
-                        </div>
-                    ));
-                }
-            }),
-        ];
-    }
-
-    function renderCells() {
-        const cells = [];
-        for (let col = visColStart; col <= visColEnd; col++) {
-            const x = col * colW;
-            const baseBg = getColBg(col);
-            for (let row = visRowStart; row <= visRowEnd; row++) {
-                const y = row * CELL_SIZE;
-                const isSel = selectedCell && selectedCell.col === col && selectedCell.row === row;
-                const isLocRow = locationRowAbsSet.has(row);
-                // 場所行は列の土日色より薄い青を優先
-                const cellBg = isLocRow
-                    ? (baseBg === '#e5e7eb' ? '#cfe2f3' : '#dbeafe')
-                    : baseBg;
-                cells.push(
-                    <div
-                        key={`c${col}-${row}`}
-                        style={{
-                            position: 'absolute', left: x, top: y, width: colW, height: CELL_SIZE,
-                            background: cellBg,
-                            borderRight: '1px solid #e5e7eb',
-                            borderBottom: '1px solid #e5e7eb',
-                            outline: isSel ? '2px solid #2563eb' : 'none',
-                            outlineOffset: '-1px',
-                            zIndex: isSel ? 3 : 0,
-                            boxSizing: 'border-box',
-                            cursor: 'cell',
-                        }}
-                        onClick={e => {
-                            if (suppressNextCellClickRef.current) return;
-                            e.stopPropagation();
-                            setSelectedCell({ col, row });
-                            setSelected(new Set());
-                        }}
-                        onContextMenu={e => handleCellRightClick(e, col, row)}
-                    />
-                );
-            }
-        }
-        return cells;
-    }
 
     function renderGroupLines() {
         const lines = [];
@@ -1122,127 +834,6 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return lines;
     }
 
-    function renderBars() {
-        const bars = [];
-        const labels = [];
-
-        // 行ごとの予定開始X位置マップ（ラベルの右端クリップ位置算出用）
-        const rowStartXMap = new Map();
-        for (const g of layoutGroups) {
-            if (!g.plans) continue;
-            for (const plan of g.plans) {
-                const sx = planToStartCol(plan, startDate, viewMode) * colW;
-                const absRow = g.startRow + plan.rowIdx;
-                if (!rowStartXMap.has(absRow)) rowStartXMap.set(absRow, []);
-                rowStartXMap.get(absRow).push({ startX: sx, planId: plan.planId });
-            }
-        }
-        for (const arr of rowStartXMap.values()) arr.sort((a, b) => a.startX - b.startX);
-
-        const contentRight = totalCols * colW; // スクロール右端（最終表示日）
-
-        for (const g of layoutGroups) {
-            if (!g.plans) continue;
-            for (const plan of g.plans) {
-                const startCol = planToStartCol(plan, startDate, viewMode);
-                const endCol = planToEndCol(plan, startDate, viewMode);
-                const x = startCol * colW;
-                if (x >= contentRight) continue; // 表示範囲外（右端超え）は描画しない
-                // 右端を最終表示日でクリップ
-                const w = Math.min(
-                    Math.max(colW, (endCol - startCol + 1) * colW),
-                    contentRight - x,
-                );
-                const absRow = g.startRow + plan.rowIdx;
-                const y = absRow * CELL_SIZE;
-                const h = CELL_SIZE;
-
-                if (x + w < scrollLeft || x > scrollLeft + containerW) continue;
-                if (absRow < visRowStart || absRow > visRowEnd) continue;
-
-                const bg = getColor(plan.taskBackColor);
-                const isSel = selected.has(plan.planId);
-
-                const isDragging = dragRef.current?.dragPlans?.some(p => p.planId === plan.planId);
-                const ghost = ghostDrag && isDragging;
-                let ghostX = x, ghostY = y;
-                if (ghost) {
-                    if (ghostDrag.type === 'move') {
-                        ghostX = x + ghostDrag.deltaCol * colW;
-                        ghostY = y + ghostDrag.deltaRow * CELL_SIZE;
-                    } else if (ghostDrag.type === 'resize-left') {
-                        ghostX = x + ghostDrag.deltaCol * colW;
-                    }
-                }
-                const barX = ghost ? ghostX : x;
-                const barY = ghost ? ghostY : y;
-
-                // 同一行の次の予定開始X（ラベルをそこでクリップ）、かつ右端を超えない
-                const rowArr = rowStartXMap.get(absRow) || [];
-                const myIdx = rowArr.findIndex(r => r.planId === plan.planId);
-                const nextBarX = (myIdx >= 0 && myIdx + 1 < rowArr.length) ? rowArr[myIdx + 1].startX : null;
-                // 表示開始日より前に始まるバーはラベル開始位置を左端（0）にクランプ
-                const labelLeft = Math.max(barX + HANDLE_W, 0);
-                const barRight  = barX + w;
-                const maxW1 = Math.max(0, barRight - HANDLE_W - labelLeft);                    // バー右端まで
-                const maxW2 = nextBarX !== null ? Math.max(0, nextBarX - labelLeft) : Infinity; // 次バー手前まで
-                const maxW3 = Math.max(0, contentRight - labelLeft);                            // コンテンツ右端まで
-                const labelWidth = Math.min(maxW1, maxW2, maxW3);
-
-                bars.push(
-                    <div
-                        key={plan.planId}
-                        style={{
-                            position: 'absolute', left: barX, top: barY,
-                            width: w, height: h, background: bg,
-                            display: 'flex', alignItems: 'center',
-                            border: '1px solid rgba(0,0,0,0.15)',
-                            boxShadow: isSel
-                                ? 'inset 0 0 0 2px #1d4ed8, 0 0 0 2px #93c5fd'
-                                : 'none',
-                            boxSizing: 'border-box', zIndex: isSel ? 4 : ghost ? 10 : 2,
-                            opacity: ghost ? 0.5 : 1, cursor: 'grab', overflow: 'hidden',
-                            userSelect: 'none',
-                        }}
-                        onPointerDown={e => { if (e.button === 0) handleBarPointerDown(e, plan, 'move'); }}
-                        onContextMenu={e => handleBarRightClick(e, plan)}
-                    >
-                        <div
-                            style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }}
-                            onPointerDown={e => { e.stopPropagation(); handleBarPointerDown(e, plan, 'resize-left'); }}
-                        />
-                        <div style={{ flex: 1 }} />
-                        <div
-                            style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }}
-                            onPointerDown={e => { e.stopPropagation(); handleBarPointerDown(e, plan, 'resize-right'); }}
-                        />
-                    </div>
-                );
-
-                // ラベル（バー外にはみ出し可、次のバー手前でクリップ）
-                const label = mode === 'location'
-                    ? (plan.serialNo ? `${plan.kisyuName} ${plan.serialNo}` : '')
-                    : (plan.workerName ? `${plan.taskName} ${plan.workerName}` : plan.taskName);
-                labels.push(
-                    <div
-                        key={`lbl-${plan.planId}`}
-                        style={{
-                            position: 'absolute', left: labelLeft, top: barY,
-                            width: labelWidth, height: h,
-                            display: 'flex', alignItems: 'center',
-                            overflow: 'hidden', whiteSpace: 'nowrap',
-                            fontSize: 10, color: '#000',
-                            pointerEvents: 'none', zIndex: 5,
-                            paddingLeft: 2, userSelect: 'none',
-                        }}
-                    >
-                        {label}
-                    </div>
-                );
-            }
-        }
-        return [...bars, ...labels];
-    }
 
     function renderLocationOverlayBars() {
         if (!extraLocationRow) return [];
@@ -1308,55 +899,6 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return bars;
     }
 
-    function renderLeftHeader() {
-        const items = [];
-        for (const g of layoutGroups) {
-            const gTop = g.startRow * CELL_SIZE;
-            if (gTop + g.numRows * CELL_SIZE <= scrollTop || gTop >= scrollTop + containerH) continue;
-
-            const hasLocRow = g.locationRowIdx >= 0;
-            const mainH = hasLocRow ? g.locationRowIdx * CELL_SIZE : g.numRows * CELL_SIZE;
-            const mainY = gTop - scrollTop;
-
-            items.push(
-                <div key={g.id} style={{
-                    position: 'absolute', left: 0, top: mainY, width: leftHdrW, height: mainH,
-                    borderBottom: hasLocRow ? '1px solid #93c5fd' : '1px solid #9ca3af',
-                    borderRight: '1px solid #d1d5db',
-                    background: '#f9fafb', boxSizing: 'border-box',
-                    display: 'flex', flexDirection: 'column', justifyContent: 'center',
-                    padding: '0 4px', overflow: 'hidden',
-                }}>
-                    {mode === 'device' ? (
-                        <>
-                            <div style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label1}</div>
-                            <div style={{ fontSize: 10, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label2}</div>
-                        </>
-                    ) : (
-                        <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>{g.label1}</div>
-                    )}
-                </div>
-            );
-
-            if (hasLocRow) {
-                const locY = (gTop + g.locationRowIdx * CELL_SIZE) - scrollTop;
-                const locH = (g.locationNumRows || 1) * CELL_SIZE;
-                items.push(
-                    <div key={`${g.id}-loc`} style={{
-                        position: 'absolute', left: 0, top: locY, width: leftHdrW, height: locH,
-                        borderBottom: '1px solid #9ca3af', borderRight: '1px solid #d1d5db',
-                        background: '#dbeafe', boxSizing: 'border-box',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 9, color: '#1d4ed8', fontWeight: 700, letterSpacing: '0.05em',
-                    }}>
-                        場所
-                    </div>
-                );
-            }
-        }
-        return items;
-    }
-
     const planCount = plans.filter(p => !p.deleted).length;
     const groupCount = filteredGroups.length;
 
@@ -1386,7 +928,13 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                 {/* 左固定列（行）*/}
                 <div style={{ position: 'absolute', left: 0, top: TOTAL_HDR_H, width: leftHdrW, height: containerH - TOTAL_HDR_H, overflow: 'hidden', zIndex: 10, background: '#f9fafb', borderRight: '1px solid #d1d5db' }}>
                     <div style={{ position: 'relative', height: totalH }}>
-                        {renderLeftHeader()}
+                        <SpreadsheetGridLeftHeader
+                            layoutGroups={layoutGroups}
+                            scrollTop={scrollTop}
+                            containerH={containerH}
+                            leftHdrW={leftHdrW}
+                            mode={mode}
+                        />
                     </div>
                 </div>
 
@@ -1406,7 +954,13 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                         {/* ヘッダー (sticky) */}
                         <div style={{ position: 'sticky', top: 0, height: TOTAL_HDR_H, zIndex: 15, background: '#f3f4f6' }}>
                             <div style={{ position: 'relative', height: TOTAL_HDR_H, width: totalCols * colW }}>
-                                {renderHeaders()}
+                                <SpreadsheetGridHeaders
+                                    viewMode={viewMode}
+                                    colW={colW}
+                                    dateColumns={dateColumns}
+                                    scrollLeft={scrollLeft}
+                                    containerW={containerW}
+                                />
                             </div>
                         </div>
                         {/* セル + バー */}
@@ -1414,9 +968,43 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                             style={{ position: 'relative', height: totalH }}
                             onPointerDown={handleContentPointerDown}
                         >
-                            {renderCells()}
+                            <SpreadsheetGridCells
+                                visColStart={visColStart}
+                                visColEnd={visColEnd}
+                                visRowStart={visRowStart}
+                                visRowEnd={visRowEnd}
+                                colW={colW}
+                                cellSize={CELL_SIZE}
+                                selectedCell={selectedCell}
+                                locationRowAbsSet={locationRowAbsSet}
+                                suppressNextCellClickRef={suppressNextCellClickRef}
+                                onSelectCell={(col, row) => {
+                                    setSelectedCell({ col, row });
+                                    setSelected(new Set());
+                                }}
+                                onCellRightClick={handleCellRightClick}
+                                getColBg={getColBg}
+                            />
                             {renderGroupLines()}
-                            {renderBars()}
+                            <SpreadsheetGridBars
+                                layoutGroups={layoutGroups}
+                                startDate={startDate}
+                                viewMode={viewMode}
+                                colW={colW}
+                                totalCols={totalCols}
+                                scrollLeft={scrollLeft}
+                                containerW={containerW}
+                                visRowStart={visRowStart}
+                                visRowEnd={visRowEnd}
+                                selected={selected}
+                                dragRef={dragRef}
+                                ghostDrag={ghostDrag}
+                                mode={mode}
+                                planToStartCol={planToStartCol}
+                                planToEndCol={planToEndCol}
+                                onBarPointerDown={handleBarPointerDown}
+                                onBarRightClick={handleBarRightClick}
+                            />
                             {renderLocationOverlayBars()}
                             {/* 矩形選択オーバーレイ */}
                             {rectSelect && (

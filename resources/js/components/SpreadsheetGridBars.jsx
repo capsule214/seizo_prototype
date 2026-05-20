@@ -42,10 +42,30 @@ export default function SpreadsheetGridBars({
         for (const plan of g.plans) {
             const startCol = planToStartCol(plan, startDate, viewMode);
             const endCol = planToEndCol(plan, startDate, viewMode);
-            const x = startCol * colW;
+
+            let drawStartCol = startCol;
+            let drawEndCol = endCol;
+
+            const isDragging = dragRef.current?.dragPlans?.some(p => p.planId === plan.planId);
+            const ghost = ghostDrag && isDragging;
+            if (ghost) {
+                if (ghostDrag.type === 'move') {
+                    drawStartCol = startCol + ghostDrag.deltaCol;
+                    drawEndCol = endCol + ghostDrag.deltaCol;
+                } else if (ghostDrag.type === 'resize-left') {
+                    drawStartCol = Math.min(endCol, startCol + ghostDrag.deltaCol);
+                } else if (ghostDrag.type === 'resize-right') {
+                    drawEndCol = Math.max(startCol, endCol + ghostDrag.deltaCol);
+                }
+
+                drawStartCol = Math.max(0, Math.min(drawStartCol, totalCols - 1));
+                drawEndCol = Math.max(drawStartCol, Math.min(drawEndCol, totalCols - 1));
+            }
+
+            const x = drawStartCol * colW;
             if (x >= contentRight) continue;
 
-            const w = Math.min(Math.max(colW, (endCol - startCol + 1) * colW), contentRight - x);
+            const w = Math.min(Math.max(colW, (drawEndCol - drawStartCol + 1) * colW), contentRight - x);
             const absRow = g.startRow + plan.rowIdx;
             const y = absRow * CELL_SIZE;
 
@@ -54,19 +74,8 @@ export default function SpreadsheetGridBars({
 
             const bg = getColor(plan.taskBackColor);
             const isSel = selected.has(plan.planId);
-            const isDragging = dragRef.current?.dragPlans?.some(p => p.planId === plan.planId);
-            const ghost = ghostDrag && isDragging;
-            let ghostX = x, ghostY = y;
-            if (ghost) {
-                if (ghostDrag.type === 'move') {
-                    ghostX = x + ghostDrag.deltaCol * colW;
-                    ghostY = y + ghostDrag.deltaRow * CELL_SIZE;
-                } else if (ghostDrag.type === 'resize-left') {
-                    ghostX = x + ghostDrag.deltaCol * colW;
-                }
-            }
-            const barX = ghost ? ghostX : x;
-            const barY = ghost ? ghostY : y;
+            const barX = x;
+            const barY = ghost && ghostDrag.type === 'move' ? y + ghostDrag.deltaRow * CELL_SIZE : y;
 
             const rowArr = rowStartXMap.get(absRow) || [];
             const myIdx = rowArr.findIndex(r => r.planId === plan.planId);

@@ -6,12 +6,18 @@ export const MIN_ROWS_LOCATION = 1;
 export const BUFFER_ROWS = 12;
 export const DEV_HDR_W = 202;
 export const ASGN_HDR_W = 80;
-export const SLOT_COUNT = 6;
 export const HANDLE_W = 5;
 
-export const SLOT_HOURS = [8, 10, 13, 15, 17, 19];
-export const SLOT_END_HOURS = [10, 12, 15, 17, 19, 21];
-export const SLOT_LABELS = ['AM1', 'AM2', 'PM1', 'PM2', '残業1', '残業2'];
+export const TIME_SLOTS = [
+    { label: 'AM1', start: '08:30', end: '10:30' },
+    { label: 'AM2', start: '10:40', end: '12:25' },
+    { label: 'PM1', start: '13:05', end: '15:05' },
+    { label: 'PM2', start: '15:15', end: '17:15' },
+    { label: '残業1', start: '17:25', end: '19:25' },
+    { label: '残業2', start: '19:25', end: '21:25' },
+];
+export const SLOT_COUNT = TIME_SLOTS.length;
+export const SLOT_LABELS = TIME_SLOTS.map(s => s.label);
 
 export const TODAY_STR = new Date().toISOString().slice(0, 10);
 
@@ -48,26 +54,30 @@ export function colToDateStr(startDate, col, viewMode) {
     return addDays(startDate, Math.floor(col / SLOT_COUNT));
 }
 
-export function dateToCol(startDate, dateStr, viewMode, hour = 8) {
+function toHm(date) {
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+export function dateToCol(startDate, dateStr, viewMode, hm = '08:30') {
     const days = daysBetween(startDate, dateStr.slice(0, 10));
     if (viewMode === 'day') return days;
-    const slotIdx = SLOT_HOURS.findIndex(h => h === hour);
+    const slotIdx = TIME_SLOTS.findIndex(s => s.start === hm);
     return days * SLOT_COUNT + Math.max(0, slotIdx);
 }
 
 export function planToStartCol(plan, startDate, viewMode) {
     const d = parseApiDate(plan.startDate);
     if (!d) return 0;
-    return dateToCol(startDate, dateToStr(d), viewMode, d.getHours());
+    return dateToCol(startDate, dateToStr(d), viewMode, toHm(d));
 }
 
 export function planToEndCol(plan, startDate, viewMode) {
     const d = parseApiDate(plan.endDate);
     if (!d) return 0;
     const dateStr = dateToStr(d);
-    const h = d.getHours();
-    if (viewMode === 'day') return dateToCol(startDate, dateStr, viewMode, h);
-    const endSlot = SLOT_END_HOURS.findIndex(eh => eh === h);
+    const hm = toHm(d);
+    if (viewMode === 'day') return dateToCol(startDate, dateStr, viewMode, hm);
+    const endSlot = TIME_SLOTS.findIndex(s => s.end === hm);
     const days = daysBetween(startDate, dateStr);
     return days * SLOT_COUNT + Math.max(0, endSlot);
 }
@@ -77,8 +87,8 @@ export function colToDateTime(startDate, col, type, viewMode) {
     const dayIdx = Math.floor(col / SLOT_COUNT);
     const slotIdx = col % SLOT_COUNT;
     const dateStr = addDays(startDate, dayIdx);
-    if (type === 'start') return `${dateStr}T${String(SLOT_HOURS[slotIdx]).padStart(2, '0')}:00:00`;
-    return `${dateStr}T${String(SLOT_END_HOURS[slotIdx]).padStart(2, '0')}:00:00`;
+    if (type === 'start') return `${dateStr}T${TIME_SLOTS[slotIdx].start}:00`;
+    return `${dateStr}T${TIME_SLOTS[slotIdx].end}:00`;
 }
 
 export function layoutPlans(plans, groupKey, groups, viewMode, startDate, minRows = MIN_ROWS, locationPlans = null) {

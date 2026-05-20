@@ -1,28 +1,19 @@
 import { useState, useEffect, useMemo } from 'react';
 import DatePicker from './DatePicker';
-
-const TIME_SLOTS = [
-    { label: 'AM1',  startH: 8,  startM: 0, endH: 10, endM: 0 },
-    { label: 'AM2',  startH: 10, startM: 0, endH: 12, endM: 0 },
-    { label: 'PM1',  startH: 13, startM: 0, endH: 15, endM: 0 },
-    { label: 'PM2',  startH: 15, startM: 0, endH: 17, endM: 0 },
-    { label: '残業1', startH: 17, startM: 0, endH: 19, endM: 0 },
-    { label: '残業2', startH: 19, startM: 0, endH: 21, endM: 0 },
-];
-
-function toDateStr(dateStr, h, m) {
+import { TIME_SLOTS } from '../lib/spreadsheet';
+function toDateStr(dateStr, hm) {
     const d = dateStr.slice(0, 10);
-    return `${d}T${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:00`;
+    return `${d}T${hm}:00`;
 }
 
 function parseDate(s) {
-    if (!s) return { date: '', h: 8, m: 0 };
+    if (!s) return { date: '', hm: TIME_SLOTS[0].start };
     const d = s.slice(0, 10);
     if (s.includes('T')) {
         const parts = s.slice(11).split(':');
-        return { date: d, h: parseInt(parts[0]), m: parseInt(parts[1]) };
+        return { date: d, hm: `${parts[0]}:${parts[1]}` };
     }
-    return { date: d, h: 8, m: 0 };
+    return { date: d, hm: TIME_SLOTS[0].start };
 }
 
 export default function ScheduleDialog({ plan, serials, tasks, workers, locations, gridMode, initialData, onSave, onClose }) {
@@ -50,9 +41,9 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, location
     })();
 
     const [startDate, setStartDate] = useState(sd.date || new Date().toISOString().slice(0, 10));
-    const [startH, setStartH] = useState(sd.h || 8);
+    const [startHm, setStartHm] = useState(TIME_SLOTS.some(s => s.start === sd.hm) ? sd.hm : TIME_SLOTS[0].start);
     const [endDate, setEndDate] = useState(ed.date || new Date().toISOString().slice(0, 10));
-    const [endH, setEndH] = useState(ed.h || 21);
+    const [endHm, setEndHm] = useState(TIME_SLOTS.some(s => s.end === ed.hm) ? ed.hm : TIME_SLOTS[TIME_SLOTS.length - 1].end);
     const [serialId, setSerialId] = useState(init.serialId || initialData?.serialId || (serials[0]?.serialId ?? ''));
     const [taskId, setTaskId] = useState(init.taskId || (tasks[0]?.taskId ?? ''));
     const [workerId, setWorkerId] = useState(init.workerId || (workers[0]?.workerId ?? ''));
@@ -72,17 +63,9 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, location
         if (first) setSerialId(first.serialId);
     }
 
-    function slotForH(h, type) {
-        for (const s of TIME_SLOTS) {
-            if (type === 'start' && s.startH === h) return s;
-            if (type === 'end' && s.endH === h) return s;
-        }
-        return null;
-    }
-
     function handleSave() {
-        const sd2 = toDateStr(startDate, startH, 0);
-        const ed2 = toDateStr(endDate, endH, 0);
+        const sd2 = toDateStr(startDate, startHm);
+        const ed2 = toDateStr(endDate, endHm);
         if (sd2 > ed2) { setError('開始日時が終了日時より後になっています'); return; }
         setError('');
         if (gridMode === 'location') {
@@ -125,12 +108,12 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, location
                             {TIME_SLOTS.map(s => (
                                 <button
                                     key={s.label}
-                                    onClick={() => setStartH(s.startH)}
+                                    onClick={() => setStartHm(s.start)}
                                     style={{
                                         padding: '3px 7px', fontSize: 11, borderRadius: 4,
-                                        border: `1px solid ${startH === s.startH ? '#2563eb' : '#d1d5db'}`,
-                                        background: startH === s.startH ? '#2563eb' : '#fff',
-                                        color: startH === s.startH ? '#fff' : '#374151',
+                                        border: `1px solid ${startHm === s.start ? '#2563eb' : '#d1d5db'}`,
+                                        background: startHm === s.start ? '#2563eb' : '#fff',
+                                        color: startHm === s.start ? '#fff' : '#374151',
                                         cursor: 'pointer',
                                     }}
                                 >{s.label}</button>
@@ -149,12 +132,12 @@ export default function ScheduleDialog({ plan, serials, tasks, workers, location
                             {TIME_SLOTS.map(s => (
                                 <button
                                     key={s.label}
-                                    onClick={() => setEndH(s.endH)}
+                                    onClick={() => setEndHm(s.end)}
                                     style={{
                                         padding: '3px 7px', fontSize: 11, borderRadius: 4,
-                                        border: `1px solid ${endH === s.endH ? '#2563eb' : '#d1d5db'}`,
-                                        background: endH === s.endH ? '#2563eb' : '#fff',
-                                        color: endH === s.endH ? '#fff' : '#374151',
+                                        border: `1px solid ${endHm === s.end ? '#2563eb' : '#d1d5db'}`,
+                                        background: endHm === s.end ? '#2563eb' : '#fff',
+                                        color: endHm === s.end ? '#fff' : '#374151',
                                         cursor: 'pointer',
                                     }}
                                 >{s.label}</button>

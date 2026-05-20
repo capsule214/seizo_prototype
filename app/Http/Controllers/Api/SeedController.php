@@ -16,8 +16,14 @@ use Illuminate\Support\Facades\DB;
 
 class SeedController extends Controller
 {
-    private const SLOT_HOURS = [8, 10, 13, 15, 17, 19];
-    private const SLOT_END_HOURS = [10, 12, 15, 17, 19, 21];
+    private const TIME_SLOTS = [
+        ['start' => '08:30', 'end' => '10:30'],
+        ['start' => '10:40', 'end' => '12:25'],
+        ['start' => '13:05', 'end' => '15:05'],
+        ['start' => '15:15', 'end' => '17:15'],
+        ['start' => '17:25', 'end' => '19:25'],
+        ['start' => '19:25', 'end' => '21:25'],
+    ];
 
     private int $lcgSeed = 42;
 
@@ -44,11 +50,11 @@ class SeedController extends Controller
         $startTs = $baseTimestamp + $startDay * 86400;
         $endTs = $baseTimestamp + $endDay * 86400;
 
-        $startHour = self::SLOT_HOURS[$startSlotOfDay];
-        $endHour = self::SLOT_END_HOURS[$endSlotOfDay];
+        $startTime = self::TIME_SLOTS[$startSlotOfDay]['start'];
+        $endTime = self::TIME_SLOTS[$endSlotOfDay]['end'];
 
-        $startDate = date('Y-m-d', $startTs) . 'T' . str_pad((string) $startHour, 2, '0', STR_PAD_LEFT) . ':00:00';
-        $endDate = date('Y-m-d', $endTs) . 'T' . str_pad((string) $endHour, 2, '0', STR_PAD_LEFT) . ':00:00';
+        $startDate = date('Y-m-d', $startTs) . 'T' . $startTime . ':00';
+        $endDate = date('Y-m-d', $endTs) . 'T' . $endTime . ':00';
 
         return [$startDate, $endDate];
     }

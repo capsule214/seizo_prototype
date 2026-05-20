@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import SpreadsheetGrid from './SpreadsheetGrid';
 import DisplaySettingsDialog from './DisplaySettingsDialog';
 import { apiFetch } from '../lib/api';
-import GridTopBar from './GridTopBar';
+import GridNavBar from './GridNavBar';
+import GridTabBar from './GridTabBar';
 import GridTabPane from './GridTabPane';
 import AlertToast from './AlertToast';
 
@@ -155,15 +156,17 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
 
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', overflow: 'hidden' }}>
-            <GridTopBar
+            <GridNavBar
+                onOpenSettings={() => setShowSettings(true)}
+                userName={user?.name}
+                onLogout={handleLogout}
+            />
+            <GridTabBar
                 tab={tab}
                 setTab={setTab}
                 isDirty={isDirty}
                 onSave={handleSave}
                 onCancel={handleCancel}
-                onOpenSettings={() => setShowSettings(true)}
-                userName={user?.name}
-                onLogout={handleLogout}
             />
 
             {/* グリッド — 両タブ常時マウント。visibility で表示/非表示を切り替え */}

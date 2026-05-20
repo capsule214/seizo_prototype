@@ -10,6 +10,8 @@ import SpreadsheetGridHeaders from './SpreadsheetGridHeaders';
 import SpreadsheetGridCells from './SpreadsheetGridCells';
 import SpreadsheetGridBars from './SpreadsheetGridBars';
 import SpreadsheetGridLeftHeader from './SpreadsheetGridLeftHeader';
+import SpreadsheetGridGroupLines from './SpreadsheetGridGroupLines';
+import SpreadsheetGridLocationOverlayBars from './SpreadsheetGridLocationOverlayBars';
 import {
     CELL_SIZE,
     HDR_H,
@@ -808,96 +810,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     }
 
 
-    function renderGroupLines() {
-        const lines = [];
-        for (const g of layoutGroups) {
-            const y = g.startRow * CELL_SIZE;
-            if (y < visRowStart * CELL_SIZE || y > (visRowEnd + 1) * CELL_SIZE) continue;
-            lines.push(
-                <div key={`gl${g.id}`} style={{
-                    position: 'absolute', left: 0, top: y,
-                    width: totalCols * colW, height: 1, background: '#9ca3af', zIndex: 1, pointerEvents: 'none',
-                }} />
-            );
-            if (g.locationRowIdx >= 0) {
-                const locY = (g.startRow + g.locationRowIdx) * CELL_SIZE;
-                if (locY >= visRowStart * CELL_SIZE && locY <= (visRowEnd + 1) * CELL_SIZE) {
-                    lines.push(
-                        <div key={`gl-loc${g.id}`} style={{
-                            position: 'absolute', left: 0, top: locY,
-                            width: totalCols * colW, height: 1, background: '#93c5fd', zIndex: 1, pointerEvents: 'none',
-                        }} />
-                    );
-                }
-            }
-        }
-        return lines;
-    }
 
-
-    function renderLocationOverlayBars() {
-        if (!extraLocationRow) return [];
-        const bars = [];
-
-        for (const g of layoutGroups) {
-            if (g.locationRowIdx < 0 || !g.locationPlans?.length) continue;
-
-            for (const plan of g.locationPlans) {
-                const startCol = planToStartCol(plan, startDate, viewMode);
-                const endCol   = planToEndCol(plan, startDate, viewMode);
-                // locationRowIdx は装置行の直後の先頭。plan.rowIdx が場所行内のサブ行オフセット
-                const absRow   = g.startRow + g.locationRowIdx + plan.rowIdx;
-
-                if (absRow < visRowStart || absRow > visRowEnd) continue;
-
-                const x = startCol * colW;
-                if (x >= totalCols * colW) continue; // 表示範囲外
-                const w = Math.min(
-                    Math.max(colW, (endCol - startCol + 1) * colW),
-                    totalCols * colW - x,
-                );
-                const y = absRow * CELL_SIZE;
-
-                if (x + w < scrollLeft || x > scrollLeft + containerW) continue;
-
-                // ラベル位置：バーが表示開始日より前に始まる場合は左端（x=0）にクランプ
-                const PAD = 3;
-                const locLabelLeft  = Math.max(x + PAD, 0);
-                const locLabelWidth = Math.max(0, Math.min(x + w - PAD - locLabelLeft, totalCols * colW - locLabelLeft));
-
-                bars.push(
-                    <div
-                        key={`loc-ov-${plan.planId}`}
-                        title={plan.locationName}
-                        style={{
-                            position: 'absolute', left: x, top: y, width: w, height: CELL_SIZE,
-                            background: '#93c5fd',
-                            border: '1px solid #3b82f6',
-                            boxSizing: 'border-box', zIndex: 2,
-                            pointerEvents: 'none',
-                        }}
-                    />
-                );
-                bars.push(
-                    <div
-                        key={`loc-ov-lbl-${plan.planId}`}
-                        style={{
-                            position: 'absolute', left: locLabelLeft, top: y,
-                            width: locLabelWidth, height: CELL_SIZE,
-                            display: 'flex', alignItems: 'center',
-                            overflow: 'hidden', whiteSpace: 'nowrap',
-                            fontSize: 9, color: '#1e3a5f',
-                            pointerEvents: 'none', zIndex: 3,
-                            userSelect: 'none',
-                        }}
-                    >
-                        {plan.locationName}
-                    </div>
-                );
-            }
-        }
-        return bars;
-    }
 
     const planCount = plans.filter(p => !p.deleted).length;
     const groupCount = filteredGroups.length;
@@ -985,7 +898,14 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                                 onCellRightClick={handleCellRightClick}
                                 getColBg={getColBg}
                             />
-                            {renderGroupLines()}
+                            <SpreadsheetGridGroupLines
+                                layoutGroups={layoutGroups}
+                                visRowStart={visRowStart}
+                                visRowEnd={visRowEnd}
+                                cellSize={CELL_SIZE}
+                                totalCols={totalCols}
+                                colW={colW}
+                            />
                             <SpreadsheetGridBars
                                 layoutGroups={layoutGroups}
                                 startDate={startDate}
@@ -1005,7 +925,20 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                                 onBarPointerDown={handleBarPointerDown}
                                 onBarRightClick={handleBarRightClick}
                             />
-                            {renderLocationOverlayBars()}
+                            <SpreadsheetGridLocationOverlayBars
+                                extraLocationRow={extraLocationRow}
+                                layoutGroups={layoutGroups}
+                                startDate={startDate}
+                                viewMode={viewMode}
+                                planToStartCol={planToStartCol}
+                                planToEndCol={planToEndCol}
+                                visRowStart={visRowStart}
+                                visRowEnd={visRowEnd}
+                                colW={colW}
+                                totalCols={totalCols}
+                                scrollLeft={scrollLeft}
+                                containerW={containerW}
+                            />
                             {/* 矩形選択オーバーレイ */}
                             {rectSelect && (
                                 <div

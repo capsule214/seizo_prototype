@@ -107,16 +107,19 @@ export default function SpreadsheetGridHeaders({
         return rows;
     }
 
-    rows.push(...yearSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-        <div key={`y${s.year}`} style={{ ...commonStyle, left: s.x, width: s.w, top: 0 }}>{s.year}年</div>
-    )));
-
-    rows.push(...monthSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-        <div key={`m${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: HDR_H }}>{s.month}月</div>
-    )));
+    rows.push(...monthSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => {
+        const monthStart = dateColumns[Math.floor(s.x / dayW)];
+        return (
+            <div key={`m-top-${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: 0 }}>
+                {monthStart ? `${monthStart.year}年${String(monthStart.month).padStart(2, '0')}月` : ''}
+            </div>
+        );
+    }));
 
     rows.push(...weekSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
-        <div key={`w${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: HDR_H * 2 }}>第{s.week}週</div>
+        <div key={`w${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: HDR_H }}>
+            {`${String(dateColumns[Math.floor(s.x / dayW)]?.month ?? '').padStart(2, '0')}月(第${s.week}週)`}
+        </div>
     )));
 
     rows.push(...dateColumns.filter((_, i) => {
@@ -131,11 +134,17 @@ export default function SpreadsheetGridHeaders({
         if (dc.type === 'saturday') color = '#3b82f6';
         if (isToday) { bg = '#ef4444'; color = '#fff'; }
         if (viewMode === 'day') {
-            return (
-                <div key={dc.dateStr} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H * 3, background: bg, color }}>
-                    {dc.day}
+            const dowColor = (dc.type === 'sunday' || dc.type === 'holiday') ? '#ef4444'
+                : dc.type === 'saturday' ? '#3b82f6'
+                    : '#374151';
+            return [
+                <div key={`${dc.dateStr}-day`} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H * 2, background: bg, color }}>
+                    {String(dc.day).padStart(2, '0')}
+                </div>,
+                <div key={`${dc.dateStr}-dow`} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H * 3, color: dowColor }}>
+                    {DOW_LABELS[dc.dow]}
                 </div>
-            );
+            ];
         }
         return SLOT_LABELS.map((label, si) => (
             <div key={`${dc.dateStr}-${si}`} style={{ ...commonStyle, left: x + si * colW, width: colW, top: HDR_H * 3, background: si === 0 ? bg : '#f3f4f6', color: si === 0 ? color : '#374151', fontSize: 9 }}>

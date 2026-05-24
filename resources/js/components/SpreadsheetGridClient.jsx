@@ -174,6 +174,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                 <GridTabPane active={tab === 'device'}>
                     <SpreadsheetGrid
                         {...gridProps}
+                        active={tab === 'device'}
                         ref={deviceGridRef}
                         mode="device"
                         jumpTarget={tab === 'device' ? jumpTarget : null}
@@ -185,6 +186,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                 <GridTabPane active={tab === 'worker'}>
                     <SpreadsheetGrid
                         {...gridProps}
+                        active={tab === 'worker'}
                         ref={workerGridRef}
                         mode="worker"
                         jumpTarget={tab === 'worker' ? jumpTarget : null}
@@ -196,6 +198,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                 <GridTabPane active={tab === 'location'}>
                     <SpreadsheetGrid
                         {...gridProps}
+                        active={tab === 'location'}
                         ref={locationGridRef}
                         mode="location"
                         jumpTarget={null}

@@ -73,6 +73,7 @@ export default function SpreadsheetGridBars({
             if (absRow < visRowStart || absRow > visRowEnd) continue;
 
             const bg = getColor(plan.taskBackColor);
+            const fg = getColor(plan.taskFontColor);
             const isSel = selected.has(plan.planId);
             const barX = x;
             const barY = ghost && ghostDrag.type === 'move' ? y + ghostDrag.deltaRow * CELL_SIZE : y;
@@ -81,11 +82,9 @@ export default function SpreadsheetGridBars({
             const myIdx = rowArr.findIndex(r => r.planId === plan.planId);
             const nextBarX = (myIdx >= 0 && myIdx + 1 < rowArr.length) ? rowArr[myIdx + 1].startX : null;
             const labelLeft = Math.max(barX + HANDLE_W, 0);
-            const barRight = barX + w;
-            const maxW1 = Math.max(0, barRight - HANDLE_W - labelLeft);
-            const maxW2 = nextBarX !== null ? Math.max(0, nextBarX - labelLeft) : Infinity;
-            const maxW3 = Math.max(0, contentRight - labelLeft);
-            const labelWidth = Math.min(maxW1, maxW2, maxW3);
+            const maxWToNextBar = nextBarX !== null ? Math.max(0, nextBarX - labelLeft) : Infinity;
+            const maxWToContent = Math.max(0, contentRight - labelLeft);
+            const labelWidth = Math.min(maxWToNextBar, maxWToContent);
 
             bars.push(
                 <div
@@ -116,7 +115,7 @@ export default function SpreadsheetGridBars({
                     style={{
                         position: 'absolute', left: labelLeft, top: barY, width: labelWidth, height: CELL_SIZE,
                         display: 'flex', alignItems: 'center', overflow: 'hidden', whiteSpace: 'nowrap',
-                        fontSize: 10, color: '#000', pointerEvents: 'none', zIndex: 5, paddingLeft: 2, userSelect: 'none',
+                        fontSize: 10, color: fg, pointerEvents: 'none', zIndex: 5, paddingLeft: 2, userSelect: 'none',
                     }}
                 >
                     {label}

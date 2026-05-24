@@ -12,6 +12,7 @@ import SpreadsheetGridBars from './SpreadsheetGridBars';
 import SpreadsheetGridLeftHeader from './SpreadsheetGridLeftHeader';
 import SpreadsheetGridGroupLines from './SpreadsheetGridGroupLines';
 import SpreadsheetGridLocationOverlayBars from './SpreadsheetGridLocationOverlayBars';
+import DeviceHeaderTooltip from './DeviceHeaderTooltip';
 import {
     CELL_SIZE,
     HDR_H,
@@ -64,6 +65,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const [selectedCell, setSelectedCell] = useState(null);
     const [copied, setCopied] = useState([]);
     const [sonar, setSonar] = useState(null);
+    const [deviceDetail, setDeviceDetail] = useState(null);
 
     const fetchedRangesRef = useRef([]);
     const [locationOverlayPlans, setLocationOverlayPlans] = useState([]);
@@ -815,6 +817,33 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const planCount = plans.filter(p => !p.deleted).length;
     const groupCount = filteredGroups.length;
 
+    function handleDeviceHeaderClick(group, event) {
+        if (mode !== 'device') return;
+        event.stopPropagation();
+        const rect = event.currentTarget?.getBoundingClientRect?.();
+        setDeviceDetail({
+            kisyuName: group.label1,
+            serialNo: group.label2,
+            planCount: group.plans?.length ?? 0,
+            locationPlanCount: group.locationPlans ? group.locationPlans.length : null,
+            x: event.clientX,
+            y: event.clientY,
+            anchorRect: rect ? { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right } : null,
+        });
+    }
+
+    useEffect(() => {
+        const onGlobalPointerDown = (e) => {
+            const target = e.target;
+            if (!(target instanceof Element)) return;
+            const inHeader = target.closest('[data-device-header="1"]');
+            const inTooltip = target.closest('[data-device-tooltip="1"]');
+            if (!inHeader && !inTooltip) setDeviceDetail(null);
+        };
+        window.addEventListener('pointerdown', onGlobalPointerDown, true);
+        return () => window.removeEventListener('pointerdown', onGlobalPointerDown, true);
+    }, []);
+
     return (
         <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
             <SpreadsheetGridToolbar
@@ -847,6 +876,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                             containerH={containerH}
                             leftHdrW={leftHdrW}
                             mode={mode}
+                            onGroupClick={handleDeviceHeaderClick}
                         />
                     </div>
                 </div>
@@ -999,6 +1029,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                     onClose={() => setScheduleDialog(null)}
                 />
             )}
+            <DeviceHeaderTooltip detail={deviceDetail} onClose={() => setDeviceDetail(null)} />
         </div>
     );
 });

@@ -6,6 +6,7 @@ export default function SpreadsheetGridLeftHeader({
     containerH,
     leftHdrW,
     mode,
+    onGroupClick,
 }) {
     const items = [];
     for (const g of layoutGroups) {
@@ -22,6 +23,11 @@ export default function SpreadsheetGridLeftHeader({
                 borderBottom: hasLocRow ? '1px solid #93c5fd' : '1px solid #9ca3af',
                 borderRight: '1px solid #d1d5db', background: '#f9fafb', boxSizing: 'border-box',
                 display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '0 4px', overflow: 'hidden',
+                cursor: mode === 'device' ? 'pointer' : 'default',
+            }}
+            data-device-header={mode === 'device' ? '1' : undefined}
+            onClick={(e) => {
+                if (mode === 'device') onGroupClick?.(g, e);
             }}>
                 {mode === 'device' ? (
                     <>

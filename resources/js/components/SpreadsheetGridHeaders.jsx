@@ -9,6 +9,7 @@ export default function SpreadsheetGridHeaders({
 }) {
     const rows = [];
     const dayW = viewMode === 'day' ? colW : colW * SLOT_COUNT;
+    const DOW_LABELS = ['日', '月', '火', '水', '木', '金', '土'];
 
     const yearSpans = [];
     const monthSpans = [];
@@ -50,6 +51,61 @@ export default function SpreadsheetGridHeaders({
         background: '#f3f4f6',
         boxSizing: 'border-box',
     };
+
+    if (viewMode === 'slot') {
+        rows.push(...weekSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map((s) => {
+            const weekStartDay = Math.floor(s.x / dayW);
+            const weekStart = dateColumns[weekStartDay];
+            const weekLabel = weekStart ? `${weekStart.year}年${String(weekStart.month).padStart(2, '0')}月(第${s.week}週)` : `第${s.week}週`;
+            return (
+                <div key={`slot-w${s.x}`} style={{ ...commonStyle, left: s.x, width: s.w, top: 0 }}>
+                    {weekLabel}
+                </div>
+            );
+        }));
+
+        rows.push(...dateColumns.flatMap((dc, dayIdx) => {
+            const x = dayIdx * dayW;
+            if (!(x + dayW > scrollLeft && x < scrollLeft + containerW)) {
+                return [];
+            }
+            const isToday = dc.dateStr === TODAY_STR;
+            let color = '#374151';
+            let bg = '#f3f4f6';
+            if (dc.type === 'sunday' || dc.type === 'holiday') color = '#ef4444';
+            if (dc.type === 'saturday') color = '#3b82f6';
+            if (isToday) { bg = '#ef4444'; color = '#fff'; }
+
+            const dateCell = (
+                <div key={`slot-date-${dc.dateStr}`} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H, background: bg, color }}>
+                    {String(dc.month).padStart(2, '0')}/{String(dc.day).padStart(2, '0')}
+                </div>
+            );
+
+            const dowColor = (dc.type === 'sunday' || dc.type === 'holiday') ? '#ef4444'
+                : dc.type === 'saturday' ? '#3b82f6'
+                    : '#374151';
+            const dowCell = (
+                <div key={`slot-dow-${dc.dateStr}`} style={{ ...commonStyle, left: x, width: dayW, top: HDR_H * 2, color: dowColor }}>
+                    {DOW_LABELS[dc.dow]}
+                </div>
+            );
+
+            const slotGroupLabels = ['AM', 'PM', '残業'];
+            const slotCells = slotGroupLabels.map((label, gi) => (
+                <div
+                    key={`slot-group-${dc.dateStr}-${gi}`}
+                    style={{ ...commonStyle, left: x + gi * colW * 2, width: colW * 2, top: HDR_H * 3, fontSize: 9 }}
+                >
+                    {label}
+                </div>
+            ));
+
+            return [dateCell, dowCell, ...slotCells];
+        }));
+
+        return rows;
+    }
 
     rows.push(...yearSpans.filter(s => s.x + s.w > scrollLeft && s.x < scrollLeft + containerW).map(s => (
         <div key={`y${s.year}`} style={{ ...commonStyle, left: s.x, width: s.w, top: 0 }}>{s.year}年</div>

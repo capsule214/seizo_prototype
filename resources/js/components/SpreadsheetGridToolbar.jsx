@@ -10,6 +10,9 @@ export default function SpreadsheetGridToolbar({
     mode,
     viewMode,
     onViewModeChange,
+    serialSearchText,
+    onSerialSearchTextChange,
+    onSerialSearch,
 }) {
     return (
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '4px 8px', background: '#fff', borderBottom: '1px solid #e5e7eb', flexShrink: 0, flexWrap: 'wrap' }}>
@@ -46,6 +49,21 @@ export default function SpreadsheetGridToolbar({
             <div style={{ width: 1, height: 20, background: '#e5e7eb', margin: '0 2px' }} />
             <button onClick={() => onViewModeChange('day')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'day' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'day' ? '#eff6ff' : '#fff', color: viewMode === 'day' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>日単位</button>
             <button onClick={() => onViewModeChange('slot')} style={{ padding: '3px 8px', border: `1px solid ${viewMode === 'slot' ? '#2563eb' : '#d1d5db'}`, borderRadius: 4, background: viewMode === 'slot' ? '#eff6ff' : '#fff', color: viewMode === 'slot' ? '#2563eb' : '#374151', cursor: 'pointer', fontSize: 12 }}>時間割</button>
+            {mode === 'device' && (
+                <>
+                    <input
+                        type="text"
+                        value={serialSearchText}
+                        onChange={e => onSerialSearchTextChange(e.target.value)}
+                        onKeyDown={e => {
+                            if (e.key === 'Enter') onSerialSearch();
+                        }}
+                        placeholder="製番検索"
+                        style={{ fontSize: 12, padding: '3px 6px', border: '1px solid #d1d5db', borderRadius: 4, minWidth: 140 }}
+                    />
+                    <button onClick={onSerialSearch} style={{ padding: '3px 8px', border: '1px solid #d1d5db', borderRadius: 4, background: '#fff', cursor: 'pointer', fontSize: 12 }}>検索</button>
+                </>
+            )}
         </div>
     );
 }

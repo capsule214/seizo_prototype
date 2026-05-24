@@ -6,14 +6,14 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
     const [selectedKisyuIds, setSelectedKisyuIds] = useState(
         settings.selectedKisyuIds?.length ? settings.selectedKisyuIds.map(String) : []
     );
-    const [selectedWorkerIds, setSelectedWorkerIds] = useState(
-        settings.selectedWorkerIds?.length ? settings.selectedWorkerIds.map(String) : []
+    const [selectedTeamNames, setSelectedTeamNames] = useState(
+        settings.selectedTeamNames?.length ? settings.selectedTeamNames : []
     );
     const [showLocationInDevice, setShowLocationInDevice] = useState(
         !!settings.showLocationInDevice
     );
     const [kisyuFilter, setKisyuFilter] = useState('');
-    const [workerFilter, setWorkerFilter] = useState('');
+    const [teamFilter, setTeamFilter] = useState('');
     const [listHeight, setListHeight] = useState(300);
     const listContainerRef = useRef(null);
 
@@ -33,7 +33,13 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
     }, {});
     const kisyuList = Object.values(kisyuGroups).filter(k => k.kisyuName.includes(kisyuFilter));
 
-    const workerList = workers.filter(w => w.workerName.includes(workerFilter));
+    const teamGroups = workers.reduce((acc, w) => {
+        const teamName = w.teamName || '(チーム未設定)';
+        if (!acc[teamName]) acc[teamName] = { teamName, count: 0 };
+        acc[teamName].count++;
+        return acc;
+    }, {});
+    const teamList = Object.values(teamGroups).filter(t => t.teamName.includes(teamFilter));
 
     function toggleKisyu(id) {
         const sid = String(id);
@@ -42,15 +48,14 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
         );
     }
 
-    function toggleWorker(id) {
-        const sid = String(id);
-        setSelectedWorkerIds(prev =>
-            prev.includes(sid) ? prev.filter(x => x !== sid) : [...prev, sid]
+    function toggleTeam(teamName) {
+        setSelectedTeamNames(prev =>
+            prev.includes(teamName) ? prev.filter(x => x !== teamName) : [...prev, teamName]
         );
     }
 
     function handleSave() {
-        onSave({ selectedKisyuIds, selectedWorkerIds, showLocationInDevice });
+        onSave({ selectedKisyuIds, selectedTeamNames, selectedWorkerIds: [], showLocationInDevice });
     }
 
     return (
@@ -61,7 +66,7 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
             <div style={{ background: '#fff', borderRadius: 10, padding: 24, width: 440, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 32px rgba(0,0,0,0.2)' }}>
                 <h2 style={{ margin: '0 0 12px', fontSize: 15, fontWeight: 700 }}>表示設定</h2>
                 <div style={{ display: 'flex', gap: 0, marginBottom: 8, borderBottom: '2px solid #e5e7eb' }}>
-                    {[['kisyu', '機種'], ['worker', '担当者']].map(([key, label]) => (
+                    {[['kisyu', '機種'], ['worker', 'チーム']].map(([key, label]) => (
                         <button
                             key={key}
                             onClick={() => setTab(key)}
@@ -119,28 +124,28 @@ export default function DisplaySettingsDialog({ serials, workers, settings, onSa
                 {tab === 'worker' && (
                     <>
                         <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 8 }}>
-                            <input
-                                placeholder="担当者名で絞り込み"
-                                value={workerFilter}
-                                onChange={e => setWorkerFilter(e.target.value)}
+                                <input
+                                placeholder="チーム名で絞り込み"
+                                value={teamFilter}
+                                onChange={e => setTeamFilter(e.target.value)}
                                 style={{ flex: 1, padding: '5px 8px', border: '1px solid #d1d5db', borderRadius: 5, fontSize: 13 }}
                             />
-                            <button onClick={() => setSelectedWorkerIds(workerList.map(w => String(w.workerId)))} style={{ fontSize: 12, padding: '4px 10px', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', background: '#f9fafb' }}>全選択</button>
-                            <button onClick={() => setSelectedWorkerIds([])} style={{ fontSize: 12, padding: '4px 10px', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', background: '#f9fafb' }}>全解除</button>
+                            <button onClick={() => setSelectedTeamNames(teamList.map(t => t.teamName))} style={{ fontSize: 12, padding: '4px 10px', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', background: '#f9fafb' }}>全選択</button>
+                            <button onClick={() => setSelectedTeamNames([])} style={{ fontSize: 12, padding: '4px 10px', border: '1px solid #d1d5db', borderRadius: 4, cursor: 'pointer', background: '#f9fafb' }}>全解除</button>
                         </div>
                         <div ref={listContainerRef} style={{ flex: 1, minHeight: 200 }}>
                             <VirtualList
-                                items={workerList.map(w => ({ ...w, id: w.workerId }))}
+                                items={teamList.map(t => ({ ...t, id: t.teamName }))}
                                 height={listHeight || 300}
                                 renderItem={item => (
                                     <label style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '0 4px', cursor: 'pointer', height: 36 }}>
                                         <input
                                             type="checkbox"
-                                            checked={selectedWorkerIds.includes(String(item.workerId))}
-                                            onChange={() => toggleWorker(item.workerId)}
+                                            checked={selectedTeamNames.includes(item.teamName)}
+                                            onChange={() => toggleTeam(item.teamName)}
                                         />
-                                        <span style={{ fontSize: 13 }}>{item.workerName}</span>
-                                        {item.teamName && <span style={{ fontSize: 11, color: '#9ca3af' }}>{item.teamName}</span>}
+                                        <span style={{ fontSize: 13, flex: 1 }}>{item.teamName}</span>
+                                        <span style={{ fontSize: 11, color: '#9ca3af' }}>{item.count}人</span>
                                     </label>
                                 )}
                             />

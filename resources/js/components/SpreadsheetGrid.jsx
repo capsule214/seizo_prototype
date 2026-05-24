@@ -87,7 +87,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const jumpAttemptsRef = useRef(0);
     const prevJumpTargetRef = useRef(null);
 
-    const leftHdrW = mode === 'device' ? DEV_HDR_W : ASGN_HDR_W;
+    const leftHdrW = mode === 'device' ? DEV_HDR_W : mode === 'worker' ? ASGN_HDR_W * 2 : ASGN_HDR_W;
     const planEndpoint = mode === 'location' ? '/location-plan' : '/plan';
     const planMinRows  = mode === 'location' ? MIN_ROWS_LOCATION : MIN_ROWS;
     const extraLocationRow = mode === 'device' && !!displaySettings.showLocationInDevice;
@@ -105,7 +105,7 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     }, [startDate, endDate, viewMode]);
 
     const filteredGroups = useMemo(() => {
-        const { selectedKisyuIds = [], selectedWorkerIds = [] } = displaySettings;
+        const { selectedKisyuIds = [], selectedTeamNames = [] } = displaySettings;
         if (mode === 'device') {
             let s = serials;
             if (selectedKisyuIds.length > 0) {
@@ -129,8 +129,8 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             }));
         } else {
             let w = workers;
-            if (selectedWorkerIds.length > 0) {
-                w = w.filter(wr => selectedWorkerIds.includes(String(wr.workerId)));
+            if (selectedTeamNames.length > 0) {
+                w = w.filter(wr => selectedTeamNames.includes(wr.teamName || ''));
             }
             return w.map(wr => ({ id: wr.workerId, label1: wr.workerName, label2: '', teamName: wr.teamName }));
         }
@@ -897,7 +897,12 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             <div ref={containerRef} style={{ flex: 1, display: 'flex', overflow: 'hidden', position: 'relative' }}>
                 {/* 左固定ヘッダー上部コーナー */}
                 <div style={{ position: 'absolute', left: 0, top: 0, width: leftHdrW, height: TOTAL_HDR_H, background: '#f3f4f6', borderRight: '1px solid #d1d5db', borderBottom: '1px solid #9ca3af', zIndex: 20, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600 }}>
-                    {mode === 'device' ? '装置' : mode === 'location' ? '場所' : '担当者'}
+                    {mode === 'device' ? '装置' : mode === 'location' ? '場所' : (
+                        <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+                            <div style={{ width: 80, borderRight: '1px solid #d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>チーム名</div>
+                            <div style={{ width: 80, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>担当者名</div>
+                        </div>
+                    )}
                 </div>
 
                 {active && (

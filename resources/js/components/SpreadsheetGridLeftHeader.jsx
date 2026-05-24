@@ -34,6 +34,15 @@ export default function SpreadsheetGridLeftHeader({
                         <div style={{ fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label1}</div>
                         <div style={{ fontSize: 10, color: '#6b7280', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{g.label2}</div>
                     </>
+                ) : mode === 'worker' ? (
+                    <div style={{ display: 'flex', width: '100%', height: '100%' }}>
+                        <div style={{ width: 80, borderRight: '1px solid #d1d5db', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px', boxSizing: 'border-box' }}>
+                            {g.teamName || '-'}
+                        </div>
+                        <div style={{ width: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', padding: '0 4px', boxSizing: 'border-box' }}>
+                            {g.label1}
+                        </div>
+                    </div>
                 ) : (
                     <div style={{ fontSize: 12, fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', textAlign: 'center' }}>{g.label1}</div>
                 )}

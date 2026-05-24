@@ -13,7 +13,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
     const [workers, setWorkers] = useState([]);
     const [tasks, setTasks] = useState([]);
     const [locations, setLocations] = useState([]);
-    const [displaySettings, setDisplaySettings] = useState({ selectedKisyuIds: [], selectedWorkerIds: [] });
+    const [displaySettings, setDisplaySettings] = useState({ selectedKisyuIds: [], selectedTeamNames: [], selectedWorkerIds: [] });
     const [showSettings, setShowSettings] = useState(false);
     const [loading, setLoading] = useState(true);
     const [jumpTarget, setJumpTarget] = useState(null);
@@ -89,7 +89,7 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
     }
 
     const handleJumpToOtherTab = useCallback((plan, targetMode) => {
-        const { selectedKisyuIds = [], selectedWorkerIds = [] } = displaySettings;
+        const { selectedKisyuIds = [], selectedTeamNames = [] } = displaySettings;
 
         // ① 表示設定チェック（機種 / 担当者が表示対象か）
         if (targetMode === 'device') {
@@ -108,8 +108,9 @@ export default function SpreadsheetGridClient({ user, onLogout }) {
                 showAlert('表示対象データがありませんでした');
                 return;
             }
-            if (selectedWorkerIds.length > 0 && !selectedWorkerIds.includes(String(worker.workerId))) {
-                showAlert('表示対象データがありませんでした（表示設定で非表示の担当者です）');
+            const teamName = worker.teamName || '';
+            if (selectedTeamNames.length > 0 && !selectedTeamNames.includes(teamName)) {
+                showAlert('表示対象データがありませんでした（表示設定で非表示のチームです）');
                 return;
             }
         }

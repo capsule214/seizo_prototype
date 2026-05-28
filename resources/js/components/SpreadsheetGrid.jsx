@@ -7,10 +7,9 @@ import ScheduleDialog from './ScheduleDialog';
 import SpreadsheetGridToolbar from './SpreadsheetGridToolbar';
 import SpreadsheetGridStatusBar from './SpreadsheetGridStatusBar';
 import SpreadsheetGridHeaders from './SpreadsheetGridHeaders';
-import SpreadsheetGridCells from './SpreadsheetGridCells';
+import SpreadsheetGridCanvas from './SpreadsheetGridCanvas';
 import SpreadsheetGridBars from './SpreadsheetGridBars';
 import SpreadsheetGridLeftHeader from './SpreadsheetGridLeftHeader';
-import SpreadsheetGridGroupLines from './SpreadsheetGridGroupLines';
 import SpreadsheetGridLocationOverlayBars from './SpreadsheetGridLocationOverlayBars';
 import DeviceHeaderTooltip from './DeviceHeaderTooltip';
 import {
@@ -905,15 +904,6 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return cols;
     }, [startDate, endDate]);
 
-    function getColBg(col) {
-        const dayIdx = viewMode === 'day' ? col : Math.floor(col / SLOT_COUNT);
-        const dc = dateColumns[dayIdx];
-        if (!dc) return '#f9fafb';
-        return (dc.type === 'holiday' || dc.type === 'sunday' || dc.type === 'saturday') ? '#e5e7eb' : '#f9fafb';
-    }
-
-
-
 
     const planCount = plans.filter(p => !p.deleted).length;
     const groupCount = filteredGroups.length;
@@ -976,8 +966,35 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                     )}
                 </div>
 
+                {/* Canvas・左固定列はアクティブ時のみ描画 */}
                 {active && (
                     <>
+                        {/* Canvas 背景：セル背景色・グリッド線・グループ区切り線を描画。
+                            スクロール領域の外（viewport-overlay）に固定配置するため、
+                            コンテンツ量が増えてもメモリ使用量が増加しない。 */}
+                        <div style={{
+                            position: 'absolute', left: leftHdrW, top: TOTAL_HDR_H,
+                            width: Math.max(0, containerW - leftHdrW),
+                            height: Math.max(0, containerH - TOTAL_HDR_H),
+                            overflow: 'hidden', pointerEvents: 'none', zIndex: 0,
+                        }}>
+                            <SpreadsheetGridCanvas
+                                width={Math.max(0, containerW - leftHdrW)}
+                                height={Math.max(0, containerH - TOTAL_HDR_H)}
+                                scrollLeft={scrollLeft}
+                                scrollTop={scrollTop}
+                                visColStart={visColStart}
+                                visColEnd={visColEnd}
+                                visRowStart={visRowStart}
+                                visRowEnd={visRowEnd}
+                                colW={colW}
+                                dateColumns={dateColumns}
+                                viewMode={viewMode}
+                                layoutGroups={layoutGroups}
+                                locationRowAbsSet={locationRowAbsSet}
+                            />
+                        </div>
+
                         {/* 左固定列（行）*/}
                         <div style={{ position: 'absolute', left: 0, top: TOTAL_HDR_H, width: leftHdrW, height: containerH - TOTAL_HDR_H, overflow: 'hidden', zIndex: 10, background: '#f9fafb', borderRight: '1px solid #d1d5db' }}>
                             <div style={{ position: 'relative', height: totalH }}>
@@ -991,20 +1008,26 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                                 />
                             </div>
                         </div>
+                    </>
+                )}
 
-                        {/* スクロール領域 */}
-                        <div
-                            ref={scrollRef}
-                            style={{ position: 'absolute', left: leftHdrW, top: 0, right: 0, bottom: 0, overflow: 'scroll' }}
-                            onScroll={onScroll}
-                            onClick={e => {
-                                if (e.target === scrollRef.current) {
-                                    setSelected(new Set());
-                                    setSelectedCell(null);
-                                }
-                            }}
-                        >
-                            <div style={{ width: totalCols * colW, height: TOTAL_HDR_H + totalH, position: 'relative' }}>
+                {/* スクロール領域：常時マウントしてスクロール位置を DOM に保持する。
+                    タブ非アクティブ時は GridTabPane の visibility:hidden で隠れる。
+                    大きなコンテンツ div も常時レンダリングしてスクロール寸法を維持する。 */}
+                <div
+                    ref={scrollRef}
+                    style={{ position: 'absolute', left: leftHdrW, top: 0, right: 0, bottom: 0, overflow: 'scroll', zIndex: 1 }}
+                    onScroll={onScroll}
+                    onClick={e => {
+                        if (e.target === scrollRef.current) {
+                            setSelected(new Set());
+                            setSelectedCell(null);
+                        }
+                    }}
+                >
+                    <div style={{ width: totalCols * colW, height: TOTAL_HDR_H + totalH, position: 'relative' }}>
+                        {active && (
+                            <>
                                 {/* ヘッダー (sticky) */}
                                 <div style={{ position: 'sticky', top: 0, height: TOTAL_HDR_H, zIndex: 15, background: '#f3f4f6' }}>
                                     <div style={{ position: 'relative', height: TOTAL_HDR_H, width: totalCols * colW }}>
@@ -1017,36 +1040,48 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                                         />
                                     </div>
                                 </div>
-                                {/* セル + バー */}
+                                {/* バー領域：背景は canvas が担当。React は可視範囲の予定バーと選択枠のみ描画 */}
                                 <div
-                                    style={{ position: 'relative', height: totalH }}
+                                    style={{ position: 'relative', height: totalH, cursor: 'cell' }}
                                     onPointerDown={handleContentPointerDown}
-                                >
-                                    <SpreadsheetGridCells
-                                        visColStart={visColStart}
-                                        visColEnd={visColEnd}
-                                        visRowStart={visRowStart}
-                                        visRowEnd={visRowEnd}
-                                        colW={colW}
-                                        cellSize={CELL_SIZE}
-                                        selectedCell={selectedCell}
-                                        locationRowAbsSet={locationRowAbsSet}
-                                        suppressNextCellClickRef={suppressNextCellClickRef}
-                                        onSelectCell={(col, row) => {
+                                    onClick={(e) => {
+                                        if (suppressNextCellClickRef.current) return;
+                                        const scrollEl = scrollRef.current;
+                                        if (!scrollEl) return;
+                                        const r = scrollEl.getBoundingClientRect();
+                                        const col = Math.floor((e.clientX - r.left + scrollEl.scrollLeft) / colW);
+                                        const row = Math.floor((e.clientY - r.top - TOTAL_HDR_H + scrollEl.scrollTop) / CELL_SIZE);
+                                        if (col >= 0 && col < totalCols && row >= 0 && row < totalRows) {
                                             setSelectedCell({ col, row });
                                             setSelected(new Set());
-                                        }}
-                                        onCellRightClick={handleCellRightClick}
-                                        getColBg={getColBg}
-                                    />
-                                    <SpreadsheetGridGroupLines
-                                        layoutGroups={layoutGroups}
-                                        visRowStart={visRowStart}
-                                        visRowEnd={visRowEnd}
-                                        cellSize={CELL_SIZE}
-                                        totalCols={totalCols}
-                                        colW={colW}
-                                    />
+                                        }
+                                    }}
+                                    onContextMenu={(e) => {
+                                        const scrollEl = scrollRef.current;
+                                        if (!scrollEl) return;
+                                        const r = scrollEl.getBoundingClientRect();
+                                        const col = Math.floor((e.clientX - r.left + scrollEl.scrollLeft) / colW);
+                                        const row = Math.floor((e.clientY - r.top - TOTAL_HDR_H + scrollEl.scrollTop) / CELL_SIZE);
+                                        if (col >= 0 && col < totalCols && row >= 0 && row < totalRows) {
+                                            handleCellRightClick(e, col, row);
+                                        }
+                                    }}
+                                >
+                                    {/* 選択セル枠（予定バーより前面に表示するため個別要素） */}
+                                    {selectedCell && (
+                                        <div style={{
+                                            position: 'absolute',
+                                            left: selectedCell.col * colW,
+                                            top: selectedCell.row * CELL_SIZE,
+                                            width: colW,
+                                            height: CELL_SIZE,
+                                            outline: '2px solid #2563eb',
+                                            outlineOffset: '-1px',
+                                            pointerEvents: 'none',
+                                            zIndex: 5,
+                                            boxSizing: 'border-box',
+                                        }} />
+                                    )}
                                     <SpreadsheetGridBars
                                         layoutGroups={layoutGroups}
                                         startDate={startDate}
@@ -1099,10 +1134,10 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
                                         />
                                     )}
                                 </div>
-                            </div>
-                        </div>
-                    </>
-                )}
+                            </>
+                        )}
+                    </div>
+                </div>
 
                 {/* ソナーエフェクト */}
                 {active && sonar && [0, 380, 760].map((delay, i) => (

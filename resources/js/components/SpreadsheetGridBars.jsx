@@ -97,6 +97,7 @@ export default function SpreadsheetGridBars({
                         opacity: ghost ? 0.5 : 1, cursor: 'grab', overflow: 'hidden', userSelect: 'none',
                     }}
                     onPointerDown={e => { if (e.button === 0) onBarPointerDown(e, plan, 'move'); }}
+                    onClick={e => e.stopPropagation()}
                     onContextMenu={e => onBarRightClick(e, plan)}
                 >
                     <div style={{ width: HANDLE_W, height: '100%', cursor: 'ew-resize', flexShrink: 0, zIndex: 3 }} onPointerDown={e => { e.stopPropagation(); onBarPointerDown(e, plan, 'resize-left'); }} />

@@ -23,8 +23,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/worker', [WorkerController::class, 'index']);
     Route::get('/task',   [TaskController::class, 'index']);
 
-    Route::get('/plan',         [PlanController::class, 'index']);
-    Route::post('/plan',        [PlanController::class, 'store']);
+    Route::get('/plan',          [PlanController::class, 'index']);
+    Route::post('/plan/search',  [PlanController::class, 'search']);
+    Route::post('/plan',         [PlanController::class, 'store']);
     Route::delete('/plan',      [PlanController::class, 'destroy']);
     Route::put('/plan/{id}',    [PlanController::class, 'update']);
     Route::delete('/plan/{id}', [PlanController::class, 'destroyOne']);
@@ -34,8 +35,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::get('/location', [LocationController::class, 'index']);
 
-    Route::get('/location-plan',         [LocationPlanController::class, 'index']);
-    Route::post('/location-plan',        [LocationPlanController::class, 'store']);
+    Route::get('/location-plan',          [LocationPlanController::class, 'index']);
+    Route::post('/location-plan/search',  [LocationPlanController::class, 'search']);
+    Route::post('/location-plan',         [LocationPlanController::class, 'store']);
     Route::put('/location-plan/{id}',    [LocationPlanController::class, 'update']);
     Route::delete('/location-plan',      [LocationPlanController::class, 'destroy']);
 

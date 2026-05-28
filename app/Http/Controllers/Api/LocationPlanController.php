@@ -48,15 +48,33 @@ class LocationPlanController extends Controller
 
     public function index(Request $request)
     {
-        $from = $request->query('from');
-        $to   = $request->query('to');
-
         $query = KdLocationPlan::with(['km_location', 'kd_serial.dm_kisyu'])
             ->where('deleted', 0);
 
-        if ($from && $to) {
-            $query->where('start_date', '<=', $to)
-                  ->where('end_date', '>=', $from);
+        return response()->json($query->get()->map(fn($p) => $this->formatPlan($p)));
+    }
+
+    public function search(Request $request)
+    {
+        $data = $request->validate([
+            'from'         => 'required|date',
+            'to'           => 'required|date|after_or_equal:from',
+            'location_ids' => 'nullable|array',
+            'location_ids.*' => 'integer|min:1',
+            'serial_ids'   => 'nullable|array',
+            'serial_ids.*' => 'integer|min:1',
+        ]);
+
+        $query = KdLocationPlan::with(['km_location', 'kd_serial.dm_kisyu'])
+            ->where('deleted', 0)
+            ->where('start_date', '<=', $data['to'])
+            ->where('end_date', '>=', $data['from']);
+
+        if (!empty($data['location_ids'])) {
+            $query->whereIn('location_id', $data['location_ids']);
+        }
+        if (!empty($data['serial_ids'])) {
+            $query->whereIn('serial_id', $data['serial_ids']);
         }
 
         return response()->json($query->get()->map(fn($p) => $this->formatPlan($p)));

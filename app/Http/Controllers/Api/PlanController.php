@@ -56,15 +56,33 @@ class PlanController extends Controller
 
     public function index(Request $request)
     {
-        $from = $request->query('from');
-        $to   = $request->query('to');
-
         $query = KdPlan::with(['kd_serial.dm_kisyu', 'km_task', 'km_worker'])
             ->where('deleted', 0);
 
-        if ($from && $to) {
-            $query->where('start_date', '<=', $to)
-                  ->where('end_date', '>=', $from);
+        return response()->json($query->get()->map(fn($p) => $this->formatPlan($p)));
+    }
+
+    public function search(Request $request)
+    {
+        $data = $request->validate([
+            'from'       => 'required|date',
+            'to'         => 'required|date|after_or_equal:from',
+            'serial_ids' => 'nullable|array',
+            'serial_ids.*' => 'integer|min:1',
+            'worker_ids' => 'nullable|array',
+            'worker_ids.*' => 'integer|min:1',
+        ]);
+
+        $query = KdPlan::with(['kd_serial.dm_kisyu', 'km_task', 'km_worker'])
+            ->where('deleted', 0)
+            ->where('start_date', '<=', $data['to'])
+            ->where('end_date', '>=', $data['from']);
+
+        if (!empty($data['serial_ids'])) {
+            $query->whereIn('serial_id', $data['serial_ids']);
+        }
+        if (!empty($data['worker_ids'])) {
+            $query->whereIn('assignee_id', $data['worker_ids']);
         }
 
         return response()->json($query->get()->map(fn($p) => $this->formatPlan($p)));

@@ -72,9 +72,11 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     const sonarRafRef = useRef(null);
     const [deviceDetail, setDeviceDetail] = useState(null);
 
-    const fetchedRangesRef = useRef([]);
+    // groupId → [{from, to}] で取得済み日付範囲をグループ別に管理
+    const fetchedGroupRangesRef = useRef(new Map());
     const [locationOverlayPlans, setLocationOverlayPlans] = useState([]);
-    const fetchedLocRangesRef = useRef([]);
+    const fetchedLocGroupRangesRef = useRef(new Map());
+    const prevFilteredIdsRef = useRef(null);
     const containerRef = useRef(null);
     const scrollRef = useRef(null);
     const [scrollTop, setScrollTop] = useState(0);
@@ -193,56 +195,148 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
         return () => obs.disconnect();
     }, []);
 
-    const fetchPlans = useCallback(async (from, to) => {
-        const gaps = computeGaps(fetchedRangesRef.current, from, to);
-        for (const gap of gaps) {
+    // スクロール方向への先読み日数。この日数分ビューポート外を事前にフェッチしておくことで
+    // ユーザーがスクロールした瞬間にデータが揃っている状態を作る。
+    const PREFETCH_DAYS = 30;
+
+    // ビューポート幅から可視日数を算出するヘルパー
+    const visibleDayCount = useCallback(() => {
+        return viewMode === 'day'
+            ? Math.ceil(containerW / colW)
+            : Math.ceil(containerW / (colW * SLOT_COUNT));
+    }, [viewMode, containerW, colW]);
+
+    // 初期フェッチ終了日：可視日数 + バッファ（表示期間内に収める）
+    const initFetchEndDate = useCallback(() => {
+        const days = Math.min(visibleDayCount() + PREFETCH_DAYS, daysBetween(startDate, endDate));
+        return addDays(startDate, Math.max(days, 0));
+    }, [visibleDayCount, startDate, endDate]);
+
+    // 縦方向の先読みバッファ行数
+    const PREFETCH_ROWS = 100;
+
+    // 初期/リセット時にフェッチすべきグループIDを推定する（plans 未ロード状態を想定）
+    const getInitialGroupIds = useCallback(() => {
+        const rowsPerGroup = planMinRows;
+        const visibleRowCount = Math.ceil(containerH / CELL_SIZE) + PREFETCH_ROWS;
+        const initGroupCount = Math.ceil(visibleRowCount / rowsPerGroup);
+        return filteredGroups.slice(0, initGroupCount).map(g => g.id);
+    }, [planMinRows, containerH, filteredGroups]);
+
+    // スクロール位置から可視グループIDを返す（縦バッファ込み）
+    function getVisibleGroupIds(rowStart, rowEnd, groups) {
+        return groups
+            .filter(g => g.startRow + g.numRows - 1 >= rowStart - PREFETCH_ROWS && g.startRow <= rowEnd + PREFETCH_ROWS)
+            .map(g => g.id);
+    }
+
+    // groupId → 日付ギャップを計算し、同一ギャップのグループをまとめて並列フェッチ
+    const fetchPlans = useCallback(async (from, to, groupIds) => {
+        if (!groupIds || groupIds.length === 0) return;
+
+        const gapBatches = new Map(); // `${from}__${to}` → {from, to, ids[]}
+        for (const gid of groupIds) {
+            const existing = fetchedGroupRangesRef.current.get(gid) || [];
+            const gaps = computeGaps(existing, from, to);
+            for (const gap of gaps) {
+                const key = `${gap.from}__${gap.to}`;
+                if (!gapBatches.has(key)) gapBatches.set(key, { from: gap.from, to: gap.to, ids: [] });
+                gapBatches.get(key).ids.push(gid);
+            }
+        }
+        if (gapBatches.size === 0) return;
+
+        const idKey = mode === 'device' ? 'serial_ids' : mode === 'worker' ? 'worker_ids' : 'location_ids';
+
+        await Promise.all([...gapBatches.values()].map(async (batch) => {
             try {
-                const res = await apiFetch(`${planEndpoint}?from=${gap.from}&to=${gap.to}`);
+                const res = await apiFetch(`${planEndpoint}/search`, {
+                    method: 'POST',
+                    body: JSON.stringify({ from: batch.from, to: batch.to, [idKey]: batch.ids }),
+                });
                 const data = await res.json();
                 setPlans(prev => {
                     const existingIds = new Set(prev.map(p => p.planId));
                     const newPlans = data.filter(p => !existingIds.has(p.planId));
-                    return [...prev, ...newPlans];
+                    return newPlans.length ? [...prev, ...newPlans] : prev;
                 });
-                fetchedRangesRef.current.push(gap);
+                for (const gid of batch.ids) {
+                    if (!fetchedGroupRangesRef.current.has(gid)) fetchedGroupRangesRef.current.set(gid, []);
+                    fetchedGroupRangesRef.current.get(gid).push({ from: batch.from, to: batch.to });
+                }
             } catch (e) {
                 console.error('fetchPlans error', e);
             }
-        }
-    }, []);
+        }));
+    }, [planEndpoint, mode]);
 
+    // 表示期間変更時：キャッシュをリセットし、可視グループ × 初期ウィンドウ分のみ取得
     useEffect(() => {
-        fetchPlans(startDate, endDate);
-    }, [startDate, endDate]);
+        fetchedGroupRangesRef.current = new Map();
+        setPlans([]);
+        const initGroupIds = getInitialGroupIds();
+        if (initGroupIds.length > 0) fetchPlans(startDate, initFetchEndDate(), initGroupIds);
+    }, [startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    const fetchLocationOverlayPlans = useCallback(async (from, to) => {
-        const gaps = computeGaps(fetchedLocRangesRef.current, from, to);
-        for (const gap of gaps) {
+    const fetchLocationOverlayPlans = useCallback(async (from, to, serialIds) => {
+        if (!serialIds || serialIds.length === 0) return;
+
+        const gapBatches = new Map();
+        for (const gid of serialIds) {
+            const existing = fetchedLocGroupRangesRef.current.get(gid) || [];
+            const gaps = computeGaps(existing, from, to);
+            for (const gap of gaps) {
+                const key = `${gap.from}__${gap.to}`;
+                if (!gapBatches.has(key)) gapBatches.set(key, { from: gap.from, to: gap.to, ids: [] });
+                gapBatches.get(key).ids.push(gid);
+            }
+        }
+        if (gapBatches.size === 0) return;
+
+        await Promise.all([...gapBatches.values()].map(async (batch) => {
             try {
-                const res = await apiFetch(`/location-plan?from=${gap.from}&to=${gap.to}`);
+                const res = await apiFetch('/location-plan/search', {
+                    method: 'POST',
+                    body: JSON.stringify({ from: batch.from, to: batch.to, serial_ids: batch.ids }),
+                });
                 const data = await res.json();
                 setLocationOverlayPlans(prev => {
                     const existingIds = new Set(prev.map(p => p.planId));
                     const newPlans = data.filter(p => !existingIds.has(p.planId));
-                    return [...prev, ...newPlans];
+                    return newPlans.length ? [...prev, ...newPlans] : prev;
                 });
-                fetchedLocRangesRef.current.push(gap);
+                for (const gid of batch.ids) {
+                    if (!fetchedLocGroupRangesRef.current.has(gid)) fetchedLocGroupRangesRef.current.set(gid, []);
+                    fetchedLocGroupRangesRef.current.get(gid).push({ from: batch.from, to: batch.to });
+                }
             } catch (e) {
                 console.error('fetchLocationOverlayPlans error', e);
             }
-        }
+        }));
     }, []);
 
     // showLocationInDevice の ON/OFF 切り替え、または表示期間変更時に場所予定をフェッチ
     useEffect(() => {
         if (!extraLocationRow) {
             setLocationOverlayPlans([]);
-            fetchedLocRangesRef.current = [];
+            fetchedLocGroupRangesRef.current = new Map();
             return;
         }
-        fetchedLocRangesRef.current = [];
-        fetchLocationOverlayPlans(startDate, endDate);
-    }, [extraLocationRow, startDate, endDate]);
+        fetchedLocGroupRangesRef.current = new Map();
+        const initSerialIds = getInitialGroupIds();
+        if (initSerialIds.length > 0) fetchLocationOverlayPlans(startDate, initFetchEndDate(), initSerialIds);
+    }, [extraLocationRow, startDate, endDate]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // フィルター変更で新たに追加されたグループの予定を取得
+    useEffect(() => {
+        const newIdSet = new Set(filteredGroups.map(g => g.id));
+        const prev = prevFilteredIdsRef.current;
+        prevFilteredIdsRef.current = newIdSet;
+        if (prev === null) return; // 初回マウントは startDate/endDate エフェクトに任せる
+        const addedIds = [...newIdSet].filter(id => !prev.has(id));
+        if (addedIds.length === 0) return;
+        fetchPlans(startDate, initFetchEndDate(), addedIds);
+    }, [filteredGroups]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // 保存・キャンセルを親から呼び出せるようにする
     useImperativeHandle(ref, () => ({
@@ -295,13 +389,14 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
             pendingUpdatesRef.current = new Map();
             pendingDeletesRef.current = new Set();
             tempIdCounterRef.current = -1;
-            fetchedRangesRef.current = [];
+            fetchedGroupRangesRef.current = new Map();
             setPlans([]);
             setIsDirty(false);
             onDirtyChange?.(false);
-            await fetchPlans(startDate, endDate);
+            const initGroupIds = getInitialGroupIds();
+            await fetchPlans(startDate, initFetchEndDate(), initGroupIds);
         },
-    }), [fetchPlans, startDate, endDate, onDirtyChange]);
+    }), [fetchPlans, initFetchEndDate, getInitialGroupIds, startDate, endDate, onDirtyChange]);
 
     useEffect(() => {
         if (!scrollRef.current) return;
@@ -334,15 +429,27 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     }, [mode, serialSearchText, serials, baseDeviceGroups]);
 
     const onScroll = useCallback(e => {
-        setScrollTop(e.currentTarget.scrollTop);
-        setScrollLeft(e.currentTarget.scrollLeft);
-        const visibleFrom = colToDateStr(startDate, Math.floor(e.currentTarget.scrollLeft / colW), viewMode);
-        const visibleTo = colToDateStr(startDate, Math.ceil((e.currentTarget.scrollLeft + containerW) / colW), viewMode);
-        if (visibleFrom >= startDate && visibleTo <= endDate) {
-            fetchPlans(visibleFrom, visibleTo);
-            if (extraLocationRow) fetchLocationOverlayPlans(visibleFrom, visibleTo);
-        }
-    }, [startDate, endDate, colW, containerW, viewMode, extraLocationRow, fetchLocationOverlayPlans]);
+        const sl = e.currentTarget.scrollLeft;
+        const st = e.currentTarget.scrollTop;
+        setScrollTop(st);
+        setScrollLeft(sl);
+
+        // 横方向：可視日付 ± PREFETCH_DAYS でフェッチ範囲を算出
+        const visibleFrom = colToDateStr(startDate, Math.floor(sl / colW), viewMode);
+        const visibleTo   = colToDateStr(startDate, Math.ceil((sl + containerW) / colW), viewMode);
+        const rawFrom = addDays(visibleFrom, -PREFETCH_DAYS);
+        const rawTo   = addDays(visibleTo,    PREFETCH_DAYS);
+        const fetchFrom = rawFrom < startDate ? startDate : rawFrom;
+        const fetchTo   = rawTo   > endDate   ? endDate   : rawTo;
+
+        // 縦方向：現在の可視行からグループIDを取得（PREFETCH_ROWS バッファ込み）
+        const visRowS = Math.floor(st / CELL_SIZE);
+        const visRowE = Math.ceil((st + containerH) / CELL_SIZE);
+        const groupIds = getVisibleGroupIds(visRowS, visRowE, layoutGroupsRef.current);
+
+        fetchPlans(fetchFrom, fetchTo, groupIds);
+        if (extraLocationRow) fetchLocationOverlayPlans(fetchFrom, fetchTo, groupIds);
+    }, [startDate, endDate, colW, containerW, containerH, viewMode, extraLocationRow, fetchPlans, fetchLocationOverlayPlans]);
 
     const triggerSonar = useCallback((x, y) => {
         if (sonarRafRef.current) cancelAnimationFrame(sonarRafRef.current);
@@ -877,14 +984,14 @@ const SpreadsheetGrid = forwardRef(function SpreadsheetGrid({
     }, [active, mode, layoutGroups, containerH, serialSearchTick, leftHdrW, triggerSonar]);
 
     async function handleSeedApply() {
-        fetchedRangesRef.current = [];
+        fetchedGroupRangesRef.current = new Map();
         setPlans([]);
         await apiFetch('/seed', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ count: deviceCount, baseDate: startDate, months: displayMonths }),
         });
-        await fetchPlans(startDate, endDate);
+        await fetchPlans(startDate, initFetchEndDate(), getInitialGroupIds());
     }
 
     const handleShiftMonth = useCallback((months) => {
